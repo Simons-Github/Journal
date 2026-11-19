@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Auf Vercel + Neon: gepoolte Verbindung für die Functions …
+  url       = env("DATABASE_URL")
+  // … und direkte Verbindung für Migrationen
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workspace Workspace?
+  versions  WorkspaceVersion[]
+
+  @@map("users")
+}
+
+/// Aktueller Stand des 12-Week-Mastery-Workspaces (ein JSON-Dokument pro Nutzer)
+model Workspace {
+  userId    String   @id @map("user_id")
+  data      Json
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("workspaces")
+}
+
+/// Sicherungskopien früherer Stände, um Fehler rückgängig machen zu können
+model WorkspaceVersion {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  version   Int
+  data      Json
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("workspace_versions")
+}
+
+/// Fehlgeschlagene Login-/Registrierungsversuche für die Begrenzung (Brute-Force-Schutz)
+model AuthAttempt {
+  id        String   @id @default(uuid())
+  key       String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([key, createdAt])
+  @@map("auth_attempts")
+}
