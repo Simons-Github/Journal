@@ -122,6 +122,7 @@ npm run dev                   # app: http://localhost:5180 · API: http://localh
 DATABASE_URL="postgres://…"           # pooled connection used by the API
 DATABASE_URL_UNPOOLED="postgres://…"  # direct connection used for migrations
 JWT_SECRET=""                         # at least 32 characters
+ANTHROPIC_API_KEY=""                  # optional: turns on the AI assistant
 ```
 
 The app works without the API too – it then simply stays local.
@@ -154,8 +155,9 @@ The app works without the API too – it then simply stays local.
 | `workspaces` | The current workspace per user as one JSON document, with a version number |
 | `workspace_versions` | Backups of earlier states, with the reason they were made |
 | `auth_attempts` | Failed sign-in and sign-up attempts for rate limiting |
+| `ai_usage` | Tokens and cost per AI assistant request, for the daily limit |
 
-Deleting an account removes its workspace and all backups (cascade). Schema: [`prisma/schema.prisma`](prisma/schema.prisma).
+Deleting an account removes its workspace, all backups and its AI usage records (cascade). Schema: [`prisma/schema.prisma`](prisma/schema.prisma).
 
 ## CI
 
@@ -196,6 +198,7 @@ Alternatively via the CLI: `vercel link`, `vercel env add JWT_SECRET`, `vercel -
 - [ ] `JWT_SECRET` set for Production **and** Preview (at least 32 characters; changing it signs everyone out)
 - [ ] Custom domain added under *Settings → Domains*
 - [ ] `/api/health` answers `{"ok":true}`
+- [ ] Optional: `ANTHROPIC_API_KEY` set to turn on the AI assistant (`AI_CHAT_MODEL`, `AI_DAILY_BUDGET_USD` adjust model and daily limit per user)
 - [ ] Registering and signing in work on the live domain
 
 ## Limits & privacy
@@ -205,7 +208,8 @@ Alternatively via the CLI: `vercel link`, `vercel env add JWT_SECRET`, `vercel -
 - Switching the language translates the interface, **not your entries**.
 - No installable app (PWA); on phones it runs in the browser.
 - There are no automated tests yet; CI checks types and the build.
-- Your data lives in your browser and, if you register, in the Postgres database of this deployment. *Settings* has **JSON export** and **delete account**.
+- Your data lives in your browser and, if you register, in the Postgres database of this deployment.
+- The **AI assistant** (signed-in users only) sends what it looks up – notes, books, brain dump pages, tasks, projects and goals – plus your chat messages to Anthropic's Claude API. Journal entries and habits are never sent. Each user has a daily cost limit (default $0.20). *Settings* has **JSON export** and **delete account**.
 
 Issues and pull requests are welcome. Please do not commit secrets or `.env` files.
 

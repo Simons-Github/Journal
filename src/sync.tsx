@@ -31,6 +31,8 @@ type SyncCtx = {
   /** Abgemeldet, weil das Konto gelöscht wurde: lokalen Sync-Zustand zurücksetzen */
   forgetAccount: () => void
   syncNow: () => void
+  /** Offene Änderungen sofort hochladen (z. B. bevor der Assistent den Server-Stand liest) */
+  flush: () => Promise<void>
   resolveConflict: (keep: 'server' | 'local') => void
   /** Vor der nächsten Speicherung den bisherigen Server-Stand als Sicherung ablegen */
   markSnapshot: (reason: string) => void
@@ -191,6 +193,11 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     },
     forgetAccount: () => { forget(); setMessage('') },
     syncNow: () => { if (auth) meta.current.dirty ? push() : pull() },
+    flush: async () => {
+      if (!auth || !meta.current.dirty || status === 'conflict') return
+      window.clearTimeout(timer.current)
+      await push()
+    },
     resolveConflict: keep => {
       if (!auth || !conflict) return
       if (keep === 'server') applyRemote(conflict)

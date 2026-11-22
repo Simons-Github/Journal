@@ -40,6 +40,9 @@ export const api = {
   versions: () => request<VersionInfo[]>('/workspace/versions'),
   restore: (id: string) => request<RemoteWorkspace>('/workspace/restore', json('POST', { id })),
 
+  aiStatus: () => request<AiStatus>('/ai/status'),
+  aiChat,
+
   /** Beim Schließen des Tabs: Request überlebt das Entladen der Seite (max. 64 KB) */
   putKeepalive: (data: unknown, baseVersion: number) => {
     const body = JSON.stringify({ data, baseVersion })
@@ -49,4 +52,52 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
     }).catch(() => {})
   },
+}
+
+// ---------- KI-Assistent ----------
+export interface AiStatus { enabled: boolean; model: string; usedUsd: number; budgetUsd: number }
+/** Nachricht im Format der Claude-API; der Browser speichert sie nur und schickt sie unverändert zurück */
+export interface AiMessage { role: 'user' | 'assistant'; content: string | Record<string, unknown>[] }
+export interface AiSource { kind: 'note' | 'book' | 'fog' | 'task' | 'project'; id: string; title: string }
+export type AiEvent =
+  | { t: 'text'; v: string }
+  | { t: 'tool'; name: string; input: Record<string, unknown> }
+  | { t: 'sources'; items: AiSource[] }
+  | { t: 'done'; messages: AiMessage[]; stop: string | null }
+  | { t: 'error'; error: string }
+
+/** Schickt eine Nachricht an den Assistenten; die Antwort kommt Zeile für Zeile als Ereignis */
+async function aiChat(
+  body: { history: AiMessage[]; text: string; lang: string; today: string },
+  onEvent: (e: AiEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response
+  try {
+    res = await fetch(API_URL + '/ai/chat', {
+      method: 'POST', credentials: 'include', signal, body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    })
+  } catch (e) {
+    if (signal?.aborted) throw e
+    throw new ApiError('Server nicht erreichbar', 0)
+  }
+  if (!res.ok || !res.body) {
+    const err = await res.json().catch(() => null)
+    throw new ApiError(err?.error || `Fehler ${res.status}`, res.status, err ?? undefined)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    buf += decoder.decode(value, { stream: !done })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (line) onEvent(JSON.parse(line) as AiEvent)
+    }
+    if (done) break
+  }
 }

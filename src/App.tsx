@@ -4,6 +4,7 @@ import { Ellipsis, House, ListChecks, Monitor, Moon, Repeat, Settings as Setting
 import { StoreProvider } from './store'
 import { EditorProvider } from './components/Editor'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { Assistant } from './components/Assistant'
 import Dashboard from './pages/Dashboard'
 import GoalSetting from './pages/GoalSetting'
 import AreasResources, { AreaPage } from './pages/AreasResources'
@@ -204,6 +205,7 @@ function Shell() {
         </main>
       </div>
       <MobileNav />
+      <Assistant />
     </div>
   )
 }

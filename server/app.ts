@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser'
 import { ZodError } from 'zod'
 import { authRouter, secret } from './auth.js'
 import { workspaceRouter } from './workspace.js'
+import { aiRouter } from './ai/router.js'
 import { HttpError } from './http.js'
 
 const app = express()
@@ -33,6 +34,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }))
 app.use('/api', (_req, _res, next) => { try { secret(); next() } catch (e) { next(e) } })
 app.use('/api/auth', authRouter)
 app.use('/api/workspace', workspaceRouter)
+app.use('/api/ai', aiRouter)
 
 app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Route nicht gefunden')))
 
