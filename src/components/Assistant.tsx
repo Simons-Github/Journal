@@ -1,14 +1,20 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowUp, BookOpen, Brain, NotebookPen, Plus, Sparkles, Square, X } from 'lucide-react'
-import { AiEvent, AiMessage, AiSource, AiStatus, ApiError, api } from '../api'
+import { AiEvent, AiMessage, AiProposal, AiSource, AiStatus, ApiError, api } from '../api'
 import { useSync } from '../sync'
 import { useEditor } from './Editor'
+import { ProposalCard, ProposalResult } from './ProposalCard'
 import { t, useLang } from '../i18n'
 import { today } from '../utils'
 
 /** Was im Chat angezeigt wird; der Verlauf für die API (history) liegt getrennt daneben */
-interface Item { role: 'user' | 'assistant'; text: string; sources?: AiSource[]; error?: string }
+interface Item {
+  role: 'user' | 'assistant'; text: string; sources?: AiSource[]; error?: string
+  proposals?: AiProposal[]
+  /** Was der Nutzer mit den Vorschlägen gemacht hat, nach Vorschlags-ID */
+  results?: Record<string, ProposalResult>
+}
 interface Saved { history: AiMessage[]; items: Item[] }
 
 const KEY = '12wm-ai-chat'
@@ -24,6 +30,7 @@ const SUGGESTIONS = [
   'Was steht diese Woche an?',
   'Welche Tasks sind überfällig?',
   'Wie stehen meine Projekte und Ziele?',
+  'Hilf mir, meine nächste Prüfung vorzubereiten',
 ]
 
 function activity(e: Extract<AiEvent, { t: 'tool' }>): string {
@@ -32,6 +39,7 @@ function activity(e: Extract<AiEvent, { t: 'tool' }>): string {
     case 'get_note': return t('Lese die Notiz')
     case 'list_tasks': return t('Schaue in deine Tasks')
     case 'list_projects': return t('Schaue in deine Projekte und Ziele')
+    case 'propose_tasks': return t('Stelle Tasks zusammen')
     default: return t('Arbeite …')
   }
 }
@@ -112,6 +120,7 @@ export function Assistant() {
           const known = new Set((it.sources ?? []).map(s => s.kind + s.id))
           return { ...it, sources: [...(it.sources ?? []), ...e.items.filter(s => !known.has(s.kind + s.id))] }
         })
+        else if (e.t === 'proposal') patchLast(it => ({ ...it, proposals: [...(it.proposals ?? []), e.proposal] }))
         else if (e.t === 'done') setChat(c => ({ ...c, history: [...history, ...e.messages] }))
         else if (e.t === 'error') patchLast(it => ({ ...it, error: e.error }))
       }, ctrl.signal)
@@ -127,6 +136,17 @@ export function Assistant() {
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input) }
   }
+  /** Ergebnis einer Vorschlagskarte merken und dem Modell beim nächsten Mal mitteilen */
+  function resolve(index: number, p: AiProposal, r: ProposalResult) {
+    const note = r.status === 'added'
+      ? `[App] Der Nutzer hat ${r.count} von ${p.tasks.length} vorgeschlagenen Tasks übernommen${r.projectName ? ` (Projekt „${r.projectName}“)` : ''}.`
+      : '[App] Der Nutzer hat den Task-Vorschlag verworfen.'
+    setChat(c => ({
+      history: [...c.history, { role: 'user', content: note }],
+      items: c.items.map((it, i) => (i === index ? { ...it, results: { ...it.results, [p.id]: r } } : it)),
+    }))
+  }
+
   const reset = () => { abort.current?.abort(); setChat(EMPTY); setInput(''); inputRef.current?.focus() }
 
   const limitReached = status ? status.usedUsd >= status.budgetUsd : false
@@ -160,7 +180,7 @@ export function Assistant() {
             <div className="ai-list" ref={listRef} aria-live="polite">
               {chat.items.length === 0 && (
                 <div className="ai-intro">
-                  <p>{t('Frag mich nach deinen Notizen, Tasks, Projekten und Zielen. Ich lese nur – ändern kann ich noch nichts.')}</p>
+                  <p>{t('Frag mich nach deinen Notizen, Tasks, Projekten und Zielen – oder lass dir Tasks für ein Vorhaben vorschlagen. Gespeichert wird erst, wenn du sie übernimmst.')}</p>
                   <div className="ai-suggestions">
                     {SUGGESTIONS.map(s => <button key={s} className="ai-suggestion" onClick={() => send(t(s))}>{t(s)}</button>)}
                   </div>
@@ -171,6 +191,9 @@ export function Assistant() {
                 <div key={i} className={`ai-msg ${it.role}`}>
                   {it.text && <div className="ai-bubble">{it.text.trim()}</div>}
                   {it.sources && it.sources.length > 0 && <Sources items={it.sources} />}
+                  {it.proposals?.map(p => (
+                    <ProposalCard key={p.id} proposal={p} result={it.results?.[p.id]} disabled={busy} onResolve={r => resolve(i, p, r)} />
+                  ))}
                   {it.error && <div className="ai-error" role="alert">{it.error}</div>}
                 </div>
               ))}

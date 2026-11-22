@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth } from '../auth.js'
 import { HttpError, handler } from '../http.js'
-import { TOOLS, loadWorkspace, runTool, type Source } from './tools.js'
+import { TOOLS, addDays, loadWorkspace, runTool, weekdayName, type Proposal, type Source } from './tools.js'
 import { assertBudget, dailyBudgetUsd, recordUsage, usedTodayMicros } from './usage.js'
 
 /**
@@ -22,16 +22,29 @@ function anthropic(): Anthropic {
   return (client ??= new Anthropic())
 }
 
+/** Die nächsten Tage mit Wochentag, damit das Modell „Freitag“ oder „nächsten Montag“ nicht selbst ausrechnen muss */
+function calendar(today: string, days = 21): string {
+  return Array.from({ length: days }, (_, i) => {
+    const d = addDays(today, i)
+    return `${weekdayName(d)} ${d}${i === 0 ? ' (today)' : i === 1 ? ' (tomorrow)' : ''}`
+  }).join('\n')
+}
+
 function systemPrompt(lang: 'de' | 'en', today: string): string {
   return [
     'You are the personal assistant inside "Journal", a planning app with tasks, projects, goals for a 12-week year, notes, study notes, books and a brain dump.',
-    `Today is ${today}. Answer in ${lang === 'de' ? 'German' : 'English'} unless the user writes in another language.`,
+    `Today is ${weekdayName(today)}, ${today}. Answer in ${lang === 'de' ? 'German' : 'English'} unless the user writes in another language.`,
+    '',
+    'Calendar for the next three weeks (use it for weekday names, never calculate dates yourself):',
+    calendar(today),
     '',
     'How to work:',
     '- Use the tools to look things up before answering questions about the user\'s notes, tasks, projects or goals. Never invent notes, tasks or dates.',
     '- search_notes is a keyword search. If the first search finds little, try synonyms, singular/plural, or the other language (German/English) before saying nothing was found.',
     '- When the answer depends on what a note says, read it with get_note and base the answer on its content. Mention which note the information comes from by its title.',
-    '- You cannot create, change or delete anything yet. When the user wants new tasks, suggest them as a short list (title, due date if sensible, priority Hoch/Mittel/Gering) so they can add them.',
+    '- When the user wants to plan something or asks for tasks, use propose_tasks. Look at existing projects (list_projects) and open tasks first when it helps to pick the right project and avoid duplicates. Spread due dates realistically instead of putting everything on one day, and only set a due date when there is a reason for it.',
+    '- Ask one short question first only when essential information is missing (e.g. the exam date). Otherwise propose and let the user adjust the card.',
+    '- You cannot change or delete existing tasks, projects or notes. Proposed tasks are only saved when the user accepts the card; messages starting with "[App]" tell you what the user did with a card.',
     '- You do not see journal entries (morning, evening, weekly review) or habits; say so if asked.',
     '',
     'Style: short and concrete. Plain text; simple "- " lists are fine, no headings, tables or bold text. Dates as the user\'s locale writes them.',
@@ -53,6 +66,7 @@ type ChatEvent =
   | { t: 'text'; v: string }
   | { t: 'tool'; name: string; input: unknown }
   | { t: 'sources'; items: Source[] }
+  | { t: 'proposal'; proposal: Proposal & { id: string } }
   | { t: 'done'; messages: Anthropic.MessageParam[]; stop: string | null }
   | { t: 'error'; error: string }
 
@@ -129,8 +143,9 @@ aiRouter.post('/chat', handler(async (req, res) => {
         if (block.type !== 'tool_use') continue
         send({ t: 'tool', name: block.name, input: block.input })
         try {
-          const { result, sources } = runTool(ws, block.name, block.input)
+          const { result, sources, proposal } = runTool(ws, block.name, block.input, { today: body.today })
           if (sources.length) send({ t: 'sources', items: sources })
+          if (proposal) send({ t: 'proposal', proposal: { id: block.id, ...proposal } })
           results.push({ type: 'tool_result', tool_use_id: block.id, content: result })
         } catch (e) {
           const detail = e instanceof z.ZodError ? e.errors.map(x => `${x.path.join('.')}: ${x.message}`).join('; ') : 'Werkzeug fehlgeschlagen'

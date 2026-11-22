@@ -112,6 +112,34 @@ const tasksInput = z.object({
   limit: z.number().int().min(1).max(100).optional(),
 })
 const projectsInput = z.object({ include_done: z.boolean().optional() })
+const PRIORITIES = ['Hoch', 'Mittel', 'Gering'] as const
+const proposeInput = z.object({
+  project: z.object({
+    existing_id: z.string().max(64).optional(),
+    new_name: z.string().trim().min(1).max(120).optional(),
+  }).optional(),
+  tasks: z.array(z.object({
+    title: z.string().trim().min(1).max(200),
+    due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    due_in_days: z.number().int().min(0).max(730).optional(),
+    priority: z.enum(PRIORITIES).optional(),
+  })).min(1).max(30),
+})
+
+// ---------- Datum (reine Kalenderdaten, unabhängig von der Zeitzone des Servers) ----------
+const toDate = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)) }
+const fromDate = (d: Date) => d.toISOString().slice(0, 10)
+export const addDays = (s: string, n: number) => { const d = toDate(s); d.setUTCDate(d.getUTCDate() + n); return fromDate(d) }
+/** Gibt es das Datum wirklich (kein 30. Februar)? */
+const isRealDate = (s: string) => fromDate(toDate(s)) === s
+export const weekdayName = (s: string) => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][toDate(s).getUTCDay()]
+
+/** Vorschlag für neue Tasks: wird im Chat als Karte gezeigt, der Nutzer übernimmt ihn selbst */
+export interface Proposal {
+  project: { id: string; name: string } | { newName: string } | null
+  tasks: { title: string; due?: string; priority: '' | (typeof PRIORITIES)[number] }[]
+}
+export interface ToolContext { today: string }
 
 const DATE = { type: 'string', description: 'Datum im Format YYYY-MM-DD' } as const
 
@@ -170,12 +198,51 @@ export const TOOLS: Anthropic.Tool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'propose_tasks',
+    description: 'Schlägt dem Nutzer neue Tasks vor. Sie werden NICHT gespeichert, sondern als Karte im Chat gezeigt; ' +
+      'der Nutzer prüft, bearbeitet und übernimmt sie selbst. Pro Antwort höchstens einmal aufrufen und die Tasks danach nicht noch einmal als Text auflisten. ' +
+      'Tasks konkret und abhakbar formulieren (Verb am Anfang, z. B. „Kapitel 3 lesen“), nicht zu viele (meist 3–10).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project: {
+          type: 'object',
+          description: 'Optional: bestehendes Projekt (ID aus list_projects) ODER Name für ein neues Projekt, wenn die Tasks zusammengehören und kein passendes existiert.',
+          properties: {
+            existing_id: { type: 'string' },
+            new_name: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        tasks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string' },
+              due_in_days: { type: 'integer', description: 'Fällig in so vielen Tagen ab heute (0 = heute). Bevorzugen für relative Angaben wie „morgen“ oder „in einer Woche“.' },
+              due: { ...DATE, description: 'Fälligkeitsdatum YYYY-MM-DD, wenn der Nutzer ein festes Datum oder einen Wochentag nennt (Kalender im System-Prompt verwenden).' },
+              priority: { type: 'string', enum: [...PRIORITIES] },
+            },
+            required: ['title'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['tasks'],
+      additionalProperties: false,
+    },
+  },
 ]
 
 const MAX_NOTE_CHARS = 12_000
 
-/** Führt ein Werkzeug aus. Gibt das Ergebnis als JSON-Text und die gefundenen Quellen (für Links im Chat) zurück. */
-export function runTool(ws: Workspace, name: string, raw: unknown): { result: string; sources: Source[] } {
+/**
+ * Führt ein Werkzeug aus. Gibt das Ergebnis als Text für das Modell zurück, dazu die gefundenen
+ * Quellen (für Links im Chat) und bei propose_tasks den Vorschlag für die Karte.
+ */
+export function runTool(ws: Workspace, name: string, raw: unknown, ctx: ToolContext): { result: string; sources: Source[]; proposal?: Proposal } {
   const json = (v: unknown) => JSON.stringify(v)
   const nameOf = (arr: Named[], id?: string) => (id ? arr.find(x => x.id === id)?.name ?? arr.find(x => x.id === id)?.title : undefined)
 
@@ -243,6 +310,44 @@ export function runTool(ws: Workspace, name: string, raw: unknown): { result: st
       const goals = ws.goals.filter(g => i.include_done || !g.done)
         .map(g => ({ id: g.id, title: g.title, done: g.done, deadline: g.deadline, area: nameOf(ws.areas, g.areaId) }))
       return { result: json({ projects, goals }), sources: [] }
+    }
+    case 'propose_tasks': {
+      const i = proposeInput.parse(raw)
+      const notes: string[] = []
+
+      let project: Proposal['project'] = null
+      if (i.project?.existing_id) {
+        const p = ws.projects.find(x => x.id === i.project!.existing_id)
+        if (p) project = { id: p.id, name: p.name }
+        else notes.push(`Projekt-ID ${i.project.existing_id} gibt es nicht; die Tasks sind ohne Projekt vorgeschlagen.`)
+      } else if (i.project?.new_name) {
+        const same = ws.projects.find(x => !x.archived && fold(x.name) === fold(i.project!.new_name!))
+        project = same ? { id: same.id, name: same.name } : { newName: i.project.new_name }
+      }
+
+      // Datum im Code berechnen statt dem Modell zu glauben; unmögliche Daten fallen weg
+      const tasks = i.tasks.map(t => {
+        let due = t.due_in_days !== undefined ? addDays(ctx.today, t.due_in_days) : t.due
+        if (due && !isRealDate(due)) { notes.push(`„${t.title}“: ${due} ist kein gültiges Datum, Fälligkeit entfernt.`); due = undefined }
+        else if (due && due < ctx.today) notes.push(`„${t.title}“: ${due} liegt in der Vergangenheit.`)
+        return { title: t.title, due, priority: t.priority ?? '' as const }
+      })
+
+      const dupes = tasks.filter(t => ws.tasks.some(x => !x.done && fold(x.title) === fold(t.title)))
+      if (dupes.length) notes.push(`Schon als offene Tasks vorhanden: ${dupes.map(d => `„${d.title}“`).join(', ')}.`)
+
+      return {
+        result: json({
+          shown_to_user: true,
+          saved: false,
+          tasks: tasks.map(t => ({ title: t.title, due: t.due && `${t.due} (${weekdayName(t.due)})`, priority: t.priority || undefined })),
+          project: project && ('newName' in project ? `neues Projekt „${project.newName}“` : project.name),
+          notes: notes.length ? notes : undefined,
+          next: 'Der Nutzer sieht die Tasks als Karte und übernimmt sie selbst. Schreibe höchstens 1–2 kurze Sätze (z. B. zur Reihenfolge oder zu den Hinweisen) und liste die Tasks nicht noch einmal auf.',
+        }),
+        sources: [],
+        proposal: { project, tasks },
+      }
     }
     default:
       return { result: json({ error: `Unbekanntes Werkzeug: ${name}` }), sources: [] }
