@@ -634,4 +634,7 @@ const EN: Record<string, string> = {
   'Der KI-Dienst ist nicht erreichbar': 'The AI service is unreachable',
   'Interner Fehler beim Assistenten': 'Internal error in the assistant',
   'Der Chat ist zu lang geworden – bitte einen neuen Chat beginnen': 'This chat has grown too long – please start a new one',
+  'Der Assistent hat diese Anfrage abgelehnt. Formuliere sie anders oder beginne einen neuen Chat.': 'The assistant declined this request. Rephrase it or start a new chat.',
+  'Keine Antwort erhalten – bitte noch einmal versuchen.': 'No answer received – please try again.',
+  'Zu viele Links heute – bitte morgen erneut versuchen': 'Too many links today – please try again tomorrow',
 }

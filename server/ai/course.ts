@@ -13,25 +13,34 @@ import { claudeUsage, priceOf, type Usage } from './usage.js'
 
 export const KINDS = ['lecture', 'reading', 'assignment', 'exam', 'project', 'review', 'other'] as const
 
-/** Ergebnis der Extraktion (gleiches Format für alle Anbieter) */
+/**
+ * Ergebnis der Extraktion (gleiches Format für alle Anbieter).
+ * Zu lange oder ungewöhnliche Werte werden gekürzt bzw. begrenzt statt die ganze (bezahlte) Antwort zu verwerfen;
+ * abgelehnt wird nur, was strukturell kaputt ist.
+ */
+const text = (max: number) => z.string().transform(s => s.trim().slice(0, max))
+const list = <T extends z.ZodTypeAny>(item: T, max: number) => z.array(item).transform(a => a.slice(0, max))
+const clamp = (min: number, max: number, round = false) =>
+  z.number().transform(n => Math.min(max, Math.max(min, round ? Math.round(n) : n)))
+
 export const courseSchema = z.object({
-  title: z.string().max(300),
-  provider: z.string().max(200),
-  summary: z.string().max(2000),
+  title: text(300),
+  provider: text(200),
+  summary: text(4000),
   weeks_inferred: z.boolean(),
-  warnings: z.array(z.string().max(500)).max(20),
-  units: z.array(z.object({
-    week: z.number().int().min(0).max(200),
-    title: z.string().max(300),
-    items: z.array(z.object({
-      kind: z.enum(KINDS),
-      title: z.string().min(1).max(300),
-      hours: z.number().min(0).max(100),
-      quote: z.string().max(600),
-    })).max(60),
-  })).max(120),
+  warnings: list(text(500), 30),
+  units: list(z.object({
+    week: clamp(0, 520, true),
+    title: text(300),
+    items: list(z.object({
+      kind: z.string().transform(k => ((KINDS as readonly string[]).includes(k) ? k : 'other') as (typeof KINDS)[number]),
+      title: text(300),
+      hours: clamp(0, 500),
+      quote: text(600),
+    }), 300).transform(items => items.filter(i => i.title)),
+  }), 300),
 })
-export type Course = z.infer<typeof courseSchema>
+export type Course = z.output<typeof courseSchema>
 export type VerifiedCourse = Omit<Course, 'units'> & {
   /** Bei Videos: Zeitstempel in den Zitaten verweisen auf diese Adresse */
   source?: { kind: 'video'; url: string }

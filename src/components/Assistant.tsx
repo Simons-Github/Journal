@@ -122,8 +122,17 @@ export function Assistant() {
           return { ...it, sources: [...(it.sources ?? []), ...e.items.filter(s => !known.has(s.kind + s.id))] }
         })
         else if (e.t === 'proposal') patchLast(it => ({ ...it, proposals: [...(it.proposals ?? []), e.proposal] }))
-        else if (e.t === 'done') setChat(c => ({ ...c, history: [...history, ...e.messages] }))
-        else if (e.t === 'error') patchLast(it => ({ ...it, error: e.error }))
+        else if (e.t === 'done') {
+          setChat(c => ({ ...c, history: [...history, ...e.messages] }))
+          // Ohne sichtbare Antwort nicht stumm bleiben: Ablehnung oder abgebrochener Durchlauf
+          patchLast(it => {
+            if (e.stop === 'refusal') return { ...it, error: t('Der Assistent hat diese Anfrage abgelehnt. Formuliere sie anders oder beginne einen neuen Chat.') }
+            if (!it.text.trim() && !it.proposals?.length) return { ...it, error: t('Keine Antwort erhalten – bitte noch einmal versuchen.') }
+            if (e.stop === 'max_tokens') return { ...it, text: it.text + ' …' }
+            return it
+          })
+        }
+        else if (e.t === 'error') patchLast(it => ({ ...it, error: t(e.error) }))
       }, ctrl.signal)
     } catch (e) {
       if (!ctrl.signal.aborted) patchLast(it => ({ ...it, error: e instanceof ApiError ? t(e.message) : t('Unbekannter Fehler') }))

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { requireAuth } from '../auth.js'
 import { HttpError, handler } from '../http.js'
 import { TOOLS, addDays, loadWorkspace, runTool, weekdayName, type Proposal, type Source } from './tools.js'
-import { assertBudget, claudeUsage, dailyBudgetUsd, recordUsage, usedTodayMicros, type Usage } from './usage.js'
+import { assertBudget, assertFetchLimit, claudeUsage, dailyBudgetUsd, recordFetch, recordUsage, usedTodayMicros, type Usage } from './usage.js'
 import { claudeExtractor, verifyQuotes, type CourseSource, type Extractor, type VerifiedCourse } from './course.js'
 import { MAX_VIDEO_SECONDS, clipSeconds, geminiExtractor, videoEnabled } from './gemini.js'
 import { parseYouTube, playlistText, videoInfo } from './youtube.js'
@@ -140,11 +140,25 @@ aiRouter.post('/chat', handler(async (req, res) => {
       const msg = await stream.finalMessage()
       await recordUsage(userId, model, claudeUsage(model, msg.usage))
 
+      stop = msg.stop_reason
+      // Leere Antworten (z. B. sofortige Ablehnung) nicht in den Verlauf: die API lehnt leere Nachrichten später ab
+      if (!msg.content.length) break
       const assistant: Anthropic.MessageParam = { role: 'assistant', content: msg.content }
       messages.push(assistant); added.push(assistant)
-      stop = msg.stop_reason
 
-      if (msg.stop_reason !== 'tool_use') break
+      if (msg.stop_reason !== 'tool_use') {
+        // Abgebrochen mitten in einem Werkzeug-Aufruf (Längenlimit, Ablehnung): Aufruf nicht ausführen,
+        // aber beantworten – sonst bleibt ein offener tool_use im Verlauf und jede weitere Nachricht scheitert
+        const open = msg.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
+        if (open.length) {
+          const closing: Anthropic.MessageParam = {
+            role: 'user',
+            content: open.map(b => ({ type: 'tool_result' as const, tool_use_id: b.id, content: 'Nicht ausgeführt: Die Antwort wurde vorher abgebrochen.', is_error: true })),
+          }
+          messages.push(closing); added.push(closing)
+        }
+        break
+      }
 
       const results: Anthropic.ToolResultBlockParam[] = []
       for (const block of msg.content) {
@@ -196,6 +210,8 @@ type CourseEvent =
 /** Link zu einem Kurs auflösen: Kursseite → Text, YouTube-Playlist → Text, YouTube-Video → Hinweis auf Video-Analyse */
 aiRouter.post('/fetch-course', handler(async (req, res) => {
   const { url } = z.object({ url: z.string().trim().min(1, 'Adresse fehlt').max(500) }).parse(req.body)
+  await assertFetchLimit(req.userId!)
+  await recordFetch(req.userId!)
   const yt = parseYouTube(url)
   if (yt?.kind === 'video') {
     if (!videoEnabled()) throw new HttpError(503, 'Für YouTube-Videos fehlt auf dem Server der GEMINI_API_KEY')

@@ -27,10 +27,16 @@ export function dailyBudgetUsd(): number {
 /** Verbrauch einer Anfrage, unabhängig vom Anbieter */
 export interface Usage { inputTokens: number; outputTokens: number; costMicros: number }
 
+/** Haiku 5.5 hat zwei Preisstufen: ab mehr als 100.000 Tokens Eingabe kostet die ganze Anfrage 0,50 $ / 2,50 $ */
+const LONG_PROMPT: Record<string, { above: number; input: number; output: number }> = {
+  'claude-haiku-5-5': { above: 100_000, input: 0.50, output: 2.50 },
+}
+
 /** Claude: Cache-Lesen kostet 10 %, Cache-Schreiben 125 % der Eingabe */
 export function claudeUsage(model: string, u: Anthropic.Usage | Anthropic.Beta.BetaUsage): Usage {
-  const p = priceOf(model)
   const read = u.cache_read_input_tokens ?? 0, write = u.cache_creation_input_tokens ?? 0
+  const long = LONG_PROMPT[model]
+  const p = long && u.input_tokens + read + write > long.above ? long : priceOf(model)
   return {
     inputTokens: u.input_tokens + read + write,
     outputTokens: u.output_tokens,
@@ -54,6 +60,17 @@ export async function assertBudget(userId: string, estimateMicros = 0) {
     throw new HttpError(429, 'Dafür reicht das restliche Tageslimit nicht – bitte morgen erneut versuchen oder den Text kürzen')
   }
 }
+
+// ---------- Abrufe von Kurs-Links (kosten nichts bei der KI, aber Server-Zeit) ----------
+const FETCH_MODEL = 'page-fetch'
+const MAX_FETCHES_PER_DAY = 40
+
+export async function assertFetchLimit(userId: string) {
+  const n = await prisma.aiUsage.count({ where: { userId, model: FETCH_MODEL, createdAt: { gte: startOfDay() } } })
+  if (n >= MAX_FETCHES_PER_DAY) throw new HttpError(429, 'Zu viele Links heute – bitte morgen erneut versuchen')
+}
+export const recordFetch = (userId: string) =>
+  prisma.aiUsage.create({ data: { userId, model: FETCH_MODEL, inputTokens: 0, outputTokens: 0, costMicros: 0 } })
 
 export async function recordUsage(userId: string, model: string, u: Usage) {
   await prisma.aiUsage.create({ data: { userId, model, ...u } })
