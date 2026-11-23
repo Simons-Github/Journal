@@ -50,7 +50,7 @@ function snippet(text: string, ts: string[], size = 240): string {
   return (start > 0 ? '…' : '') + out + (start + size < flat.length ? '…' : '')
 }
 
-export type SourceKind = 'note' | 'book' | 'fog' | 'task' | 'project'
+export type SourceKind = 'note' | 'book' | 'fog' | 'task' | 'project' | 'web'
 export interface Source { kind: SourceKind; id: string; title: string }
 
 interface Doc { kind: SourceKind; id: string; title: string; body: string; meta: Record<string, string | undefined> }

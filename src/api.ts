@@ -81,7 +81,8 @@ export type FetchedCourse =
   | { kind: 'video'; url: string; title: string; seconds: number | null; maxSeconds: number }
 /** Nachricht im Format der Claude-API; der Browser speichert sie nur und schickt sie unverändert zurück */
 export interface AiMessage { role: 'user' | 'assistant'; content: string | Record<string, unknown>[] }
-export interface AiSource { kind: 'note' | 'book' | 'fog' | 'task' | 'project'; id: string; title: string }
+/** Quelle einer Antwort; bei 'web' ist die id die Adresse der Seite */
+export interface AiSource { kind: 'note' | 'book' | 'fog' | 'task' | 'project' | 'web'; id: string; title: string }
 export interface AiProposal {
   id: string
   project: { id: string; name: string } | { newName: string } | null
@@ -92,6 +93,7 @@ export type AiEvent =
   | { t: 'tool'; name: string; input: Record<string, unknown> }
   | { t: 'sources'; items: AiSource[] }
   | { t: 'proposal'; proposal: AiProposal }
+  | { t: 'import'; url: string }
   | { t: 'done'; messages: AiMessage[]; stop: string | null }
   | { t: 'error'; error: string }
 

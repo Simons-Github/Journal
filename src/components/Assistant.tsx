@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowUp, BookOpen, Brain, NotebookPen, Plus, Sparkles, Square, X } from 'lucide-react'
+import { ArrowUp, BookOpen, Brain, Globe, NotebookPen, Plus, Sparkles, Square, X } from 'lucide-react'
 import { AiEvent, AiMessage, AiProposal, AiSource, AiStatus, ApiError, api } from '../api'
 import { useSync } from '../sync'
 import { useEditor } from './Editor'
@@ -13,6 +13,8 @@ import { today } from '../utils'
 interface Item {
   role: 'user' | 'assistant'; text: string; sources?: AiSource[]; error?: string
   proposals?: AiProposal[]
+  /** Links, für die der Assistent den Kurs-Import anbietet */
+  imports?: string[]
   /** Was der Nutzer mit den Vorschlägen gemacht hat, nach Vorschlags-ID */
   results?: Record<string, ProposalResult>
 }
@@ -41,23 +43,34 @@ function activity(e: Extract<AiEvent, { t: 'tool' }>): string {
     case 'list_tasks': return t('Schaue in deine Tasks')
     case 'list_projects': return t('Schaue in deine Projekte und Ziele')
     case 'propose_tasks': return t('Stelle Tasks zusammen')
+    case 'fetch_webpage': {
+      let host = ''
+      try { host = new URL(String(e.input.url)).hostname } catch { /* ignorieren */ }
+      return e.input.include_subpages ? t('Lese {host} mit Unterseiten', { host }) : t('Lese {host}', { host })
+    }
+    case 'open_course_import': return t('Bereite den Kurs-Import vor')
     default: return t('Arbeite …')
   }
 }
 
-const SOURCE_ICON = { note: NotebookPen, book: BookOpen, fog: Brain, task: NotebookPen, project: NotebookPen }
+const SOURCE_ICON = { note: NotebookPen, book: BookOpen, fog: Brain, task: NotebookPen, project: NotebookPen, web: Globe }
 
 function Sources({ items }: { items: AiSource[] }) {
   const ed = useEditor()
   const nav = useNavigate()
   const open = (s: AiSource) => {
     if (s.kind === 'fog') nav('/brain-fog')
-    else ed.open(s.kind, s.id)
+    else if (s.kind !== 'web') ed.open(s.kind, s.id)
   }
   return (
     <div className="ai-sources">
       {items.map(s => {
         const Icon = SOURCE_ICON[s.kind]
+        if (s.kind === 'web') return (
+          <a key={s.kind + s.id} className="ai-source" href={s.id} target="_blank" rel="noreferrer" title={s.id}>
+            <Icon size={13} strokeWidth={2} /><span>{s.title || s.id}</span>
+          </a>
+        )
         return (
           <button key={s.kind + s.id} className="ai-source" onClick={() => open(s)} title={t('Öffnen')}>
             <Icon size={13} strokeWidth={2} /><span>{s.title || t('(ohne Titel)')}</span>
@@ -122,12 +135,13 @@ export function Assistant() {
           return { ...it, sources: [...(it.sources ?? []), ...e.items.filter(s => !known.has(s.kind + s.id))] }
         })
         else if (e.t === 'proposal') patchLast(it => ({ ...it, proposals: [...(it.proposals ?? []), e.proposal] }))
+        else if (e.t === 'import') patchLast(it => ({ ...it, imports: [...new Set([...(it.imports ?? []), e.url])] }))
         else if (e.t === 'done') {
           setChat(c => ({ ...c, history: [...history, ...e.messages] }))
           // Ohne sichtbare Antwort nicht stumm bleiben: Ablehnung oder abgebrochener Durchlauf
           patchLast(it => {
             if (e.stop === 'refusal') return { ...it, error: t('Der Assistent hat diese Anfrage abgelehnt. Formuliere sie anders oder beginne einen neuen Chat.') }
-            if (!it.text.trim() && !it.proposals?.length) return { ...it, error: t('Keine Antwort erhalten – bitte noch einmal versuchen.') }
+            if (!it.text.trim() && !it.proposals?.length && !it.imports?.length) return { ...it, error: t('Keine Antwort erhalten – bitte noch einmal versuchen.') }
             if (e.stop === 'max_tokens') return { ...it, text: it.text + ' …' }
             return it
           })
@@ -198,6 +212,7 @@ export function Assistant() {
                     {SUGGESTIONS.map(s => <button key={s} className="ai-suggestion" onClick={() => send(t(s))}>{t(s)}</button>)}
                   </div>
                   <div><CourseImportButton className="ai-suggestion ai-import" /></div>
+                  <p className="small">{t('Gib mir einen Link zu einer Kursseite – ich lese sie und schlage Tasks vor.')}</p>
                   <p className="muted small">{t('Journal-Einträge und Habits sieht der Assistent nicht.')}</p>
                 </div>
               )}
@@ -205,6 +220,12 @@ export function Assistant() {
                 <div key={i} className={`ai-msg ${it.role}`}>
                   {it.text && <div className="ai-bubble">{it.text.trim()}</div>}
                   {it.sources && it.sources.length > 0 && <Sources items={it.sources} />}
+                  {it.imports?.map(url => (
+                    <div key={url} className="ai-card ai-import-card">
+                      <span className="small muted">{new URL(url).hostname}{new URL(url).pathname.length > 1 ? new URL(url).pathname.slice(0, 50) : ''}</span>
+                      <CourseImportButton className="btn primary" initialLink={url} label={t('Kurs-Import mit diesem Link öffnen')} />
+                    </div>
+                  ))}
                   {it.proposals?.map(p => (
                     <ProposalCard key={p.id} proposal={p} result={it.results?.[p.id]} disabled={busy} onResolve={r => resolve(i, p, r)} />
                   ))}
