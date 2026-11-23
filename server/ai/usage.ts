@@ -16,12 +16,18 @@ const PRICES: Record<string, { input: number; output: number }> = {
 export const priceOf = (model: string) => PRICES[model] ?? PRICES['claude-opus-5-5']
 
 /**
- * Tageslimit pro Nutzer in US-Dollar. Standard 1 $: reicht für Hunderte Chat-Nachrichten mit Haiku
- * und mehrere Kurs-Importe mit Sonnet (ein Kurs kostet meist 0,02–0,30 $).
+ * Tageslimit in US-Dollar: Schutz vor versehentlich hohen Kosten auf dem eigenen Konto.
+ * Jeder kann es in den Einstellungen selbst setzen; sonst gilt AI_DAILY_BUDGET_USD bzw. 1 $
+ * (reicht für Hunderte Chat-Nachrichten mit Haiku und mehrere Kurs-Importe mit Sonnet).
  */
-export function dailyBudgetUsd(): number {
+export const BUDGET_RANGE = { min: 0.1, max: 100 }
+export function defaultBudgetUsd(): number {
   const v = Number(process.env.AI_DAILY_BUDGET_USD)
   return Number.isFinite(v) && v > 0 ? v : 1
+}
+export async function dailyBudgetUsd(userId: string): Promise<number> {
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { aiDailyBudgetUsd: true } })
+  return u?.aiDailyBudgetUsd ?? defaultBudgetUsd()
 }
 
 /** Verbrauch einer Anfrage, unabhängig vom Anbieter */
@@ -54,8 +60,8 @@ export async function usedTodayMicros(userId: string): Promise<number> {
 /** Prüft das Tageslimit; mit `estimateMicros` muss auch die geschätzte nächste Anfrage noch hineinpassen */
 export async function assertBudget(userId: string, estimateMicros = 0) {
   const used = await usedTodayMicros(userId)
-  const budget = dailyBudgetUsd() * 1e6
-  if (used >= budget) throw new HttpError(429, 'Tageslimit des Assistenten erreicht – morgen geht es weiter')
+  const budget = (await dailyBudgetUsd(userId)) * 1e6
+  if (used >= budget) throw new HttpError(429, 'Dein Tageslimit für den Assistenten ist erreicht – morgen geht es weiter (änderbar in den Einstellungen)')
   if (used + estimateMicros > budget) {
     throw new HttpError(429, 'Dafür reicht das restliche Tageslimit nicht – bitte morgen erneut versuchen oder den Text kürzen')
   }

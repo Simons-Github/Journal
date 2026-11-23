@@ -829,3 +829,22 @@ h1, h2, h3, p { margin: 0; }
 .ci-range input { width: 110px; }
 .ci-ts { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; flex: none; padding: 1px 6px; border-radius: 6px; }
 .ci-ts:hover { background: var(--accent-soft); }
+
+/* Einstellungen: eigene API-Keys */
+.ai-set-lead { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; max-width: 70ch; margin-bottom: 16px; }
+.ai-keys { display: flex; flex-direction: column; gap: 12px; }
+.ai-key { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 14px; background: var(--paper); box-shadow: 0 0 0 1px var(--line); }
+.ai-key-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-key-head svg { color: var(--accent); }
+.ai-key-head .pill { margin-left: auto; }
+.ai-key-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.ai-key-actions .muted { margin-right: auto; }
+.ai-key-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.ai-key-form input { flex: 1 1 240px; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.ai-key-help { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 550; color: var(--accent); }
+.ai-key-help:hover { text-decoration: underline; }
+.ai-key-ok { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ok); }
+.ai-budget { display: flex; flex-direction: column; gap: 6px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.ai-budget label { display: flex; flex-direction: column; gap: 2px; }
+.ai-budget-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-budget-row input { width: 110px; }

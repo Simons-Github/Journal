@@ -170,7 +170,8 @@ function ConflictBanner() {
 
 function Shell() {
   const loc = useLocation()
-  useEffect(() => { window.scrollTo(0, 0) }, [loc.pathname])
+  // Neue Seite oben beginnen – außer bei Sprungmarken wie „/einstellungen#ki“
+  useEffect(() => { if (!loc.hash) window.scrollTo(0, 0) }, [loc.pathname, loc.hash])
   // Morgen- und Abendseiten bekommen ihre eigene Tageszeit-Farbe
   const tone = loc.pathname.startsWith('/morgen') ? 'morning' : loc.pathname.startsWith('/abend') ? 'evening' : 'day'
   return (

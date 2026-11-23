@@ -4,6 +4,7 @@ import { DB, emptyDB, useStore } from '../store'
 import { statusLabel, useSync } from '../sync'
 import { today } from '../utils'
 import { PageHeader, Section, Tabs } from '../components/ui'
+import { AiSettings } from '../components/AiSettings'
 import { LANGS, locale, t, useLang } from '../i18n'
 import { useTheme, ThemeMode } from '../theme'
 
@@ -65,6 +66,8 @@ export default function Settings() {
         ) : <AuthForm />}
         <p className="hint small">Server: {API_URL}</p>
       </Section>
+
+      {sync.auth && <AiSettings />}
 
       {sync.auth && <VersionHistory />}
 

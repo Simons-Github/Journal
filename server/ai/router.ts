@@ -4,9 +4,11 @@ import { z } from 'zod'
 import { requireAuth } from '../auth.js'
 import { HttpError, handler } from '../http.js'
 import { TOOLS, addDays, loadWorkspace, runTool, weekdayName, type Proposal, type Source } from './tools.js'
-import { assertBudget, assertFetchLimit, claudeUsage, dailyBudgetUsd, recordFetch, recordUsage, usedTodayMicros, type Usage } from './usage.js'
+import { BUDGET_RANGE, assertBudget, assertFetchLimit, claudeUsage, dailyBudgetUsd, defaultBudgetUsd, recordFetch, recordUsage, usedTodayMicros, type Usage } from './usage.js'
 import { claudeExtractor, verifyQuotes, type CourseSource, type Extractor, type VerifiedCourse } from './course.js'
-import { MAX_VIDEO_SECONDS, clipSeconds, geminiExtractor, videoEnabled } from './gemini.js'
+import { MAX_VIDEO_SECONDS, clipSeconds, geminiExtractor } from './gemini.js'
+import { PROVIDERS, encrypt, keysFor, requireKey, verifyKey } from './keys.js'
+import { prisma } from '../db.js'
 import { parseYouTube, playlistText, videoInfo } from './youtube.js'
 import { fetchCoursePages } from './fetchPage.js'
 
@@ -21,11 +23,6 @@ const chatModel = () => process.env.AI_CHAT_MODEL || 'claude-haiku-5-5'
 const MAX_STEPS = 6
 const MAX_HISTORY_BYTES = 400_000
 
-let client: Anthropic | null = null
-function anthropic(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, 'Der KI-Assistent ist nicht eingerichtet (ANTHROPIC_API_KEY fehlt)')
-  return (client ??= new Anthropic())
-}
 
 /** Die nächsten Tage mit Wochentag, damit das Modell „Freitag“ oder „nächsten Montag“ nicht selbst ausrechnen muss */
 function calendar(today: string, days = 21): string {
@@ -78,7 +75,9 @@ type ChatEvent =
 function userMessage(e: unknown): string {
   if (e instanceof HttpError) return e.message
   if (e instanceof Anthropic.RateLimitError) return 'Der KI-Dienst ist gerade ausgelastet – bitte gleich noch einmal versuchen'
-  if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) return 'Der API-Key für den KI-Dienst ist ungültig'
+  if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) return 'Dein Anthropic-API-Key wurde abgelehnt – bitte in den Einstellungen prüfen'
+  // Kein eigener Fehlertyp für leeres Guthaben: die API meldet es als 400 mit Hinweis auf „credit balance“
+  if (e instanceof Anthropic.BadRequestError && /credit balance/i.test(e.message)) return 'Dein Anthropic-Guthaben ist aufgebraucht – lade es in der Anthropic Console auf'
   if (e instanceof Anthropic.APIConnectionError) return 'Der KI-Dienst ist nicht erreichbar'
   if (e instanceof Anthropic.APIError) return `Fehler beim KI-Dienst (${e.status ?? 'unbekannt'})`
   return 'Interner Fehler beim Assistenten'
@@ -88,14 +87,16 @@ export const aiRouter = Router()
 aiRouter.use(requireAuth)
 
 aiRouter.get('/status', handler(async (req, res) => {
+  const { keys } = await keysFor(req.userId!)
   res.json({
-    enabled: Boolean(process.env.ANTHROPIC_API_KEY),
+    /** Ohne eigenen (oder freigegebenen) Anthropic-Key ist der Assistent für diesen Nutzer aus */
+    enabled: Boolean(keys.anthropic),
     model: chatModel(),
     usedUsd: (await usedTodayMicros(req.userId!)) / 1e6,
-    budgetUsd: dailyBudgetUsd(),
-    /** Was der Kurs-Import auf diesem Server kann */
-    video: videoEnabled(),
-    playlists: Boolean(process.env.YOUTUBE_API_KEY),
+    budgetUsd: await dailyBudgetUsd(req.userId!),
+    /** Was der Kurs-Import für diesen Nutzer kann */
+    video: Boolean(keys.gemini),
+    playlists: Boolean(keys.youtube),
   })
 }))
 
@@ -105,7 +106,7 @@ aiRouter.post('/chat', handler(async (req, res) => {
     throw new HttpError(413, 'Der Chat ist zu lang geworden – bitte einen neuen Chat beginnen')
   }
   const userId = req.userId!
-  const api = anthropic()
+  const api = new Anthropic({ apiKey: requireKey((await keysFor(userId)).keys, 'anthropic') })
   await assertBudget(userId)
   const ws = await loadWorkspace(userId)
 
@@ -188,6 +189,58 @@ aiRouter.post('/chat', handler(async (req, res) => {
   }
 }))
 
+// ---------- Eigene API-Keys und Tageslimit ----------
+const provider = z.enum(PROVIDERS)
+
+async function keyOverview(userId: string) {
+  const [rows, { source }, budget] = await Promise.all([
+    prisma.userApiKey.findMany({ where: { userId }, select: { provider: true, last4: true, updatedAt: true } }),
+    keysFor(userId),
+    prisma.user.findUnique({ where: { id: userId }, select: { aiDailyBudgetUsd: true } }),
+  ])
+  return {
+    /** Nie der Key selbst – nur woran man ihn erkennt */
+    keys: rows.map(r => ({ provider: r.provider, last4: r.last4, updatedAt: r.updatedAt })),
+    /** Anbieter, für die dieser Nutzer ohne eigenen Key den Server-Key mitbenutzen darf */
+    serverKeys: PROVIDERS.filter(p => source[p] === 'server'),
+    budgetUsd: budget?.aiDailyBudgetUsd ?? null,
+    defaultBudgetUsd: defaultBudgetUsd(),
+    budgetRange: BUDGET_RANGE,
+  }
+}
+
+aiRouter.get('/keys', handler(async (req, res) => { res.json(await keyOverview(req.userId!)) }))
+
+aiRouter.put('/keys/:provider', handler(async (req, res) => {
+  const p = provider.parse(req.params.provider)
+  const { key } = z.object({
+    key: z.string().trim().min(20, 'Das sieht nicht nach einem API-Key aus').max(300).regex(/^\S+$/, 'Der Key darf keine Leerzeichen enthalten'),
+  }).parse(req.body)
+  // Prüfungen rufen den Anbieter auf: höchstens 20 pro Stunde
+  const since = new Date(Date.now() - 3600_000)
+  const attempts = `ai-key:${req.userId}`
+  if (await prisma.authAttempt.count({ where: { key: attempts, createdAt: { gt: since } } }) >= 20) {
+    throw new HttpError(429, 'Zu viele Versuche – bitte in einer Stunde erneut versuchen')
+  }
+  await prisma.authAttempt.create({ data: { key: attempts } })
+  await verifyKey(p, key)
+  const data = { secret: encrypt(key), last4: key.slice(-4) }
+  await prisma.userApiKey.upsert({ where: { userId_provider: { userId: req.userId!, provider: p } }, create: { userId: req.userId!, provider: p, ...data }, update: data })
+  res.json(await keyOverview(req.userId!))
+}))
+
+aiRouter.delete('/keys/:provider', handler(async (req, res) => {
+  const p = provider.parse(req.params.provider)
+  await prisma.userApiKey.deleteMany({ where: { userId: req.userId!, provider: p } })
+  res.json(await keyOverview(req.userId!))
+}))
+
+aiRouter.put('/budget', handler(async (req, res) => {
+  const { usd } = z.object({ usd: z.number().min(BUDGET_RANGE.min).max(BUDGET_RANGE.max).nullable() }).parse(req.body)
+  await prisma.user.update({ where: { id: req.userId! }, data: { aiDailyBudgetUsd: usd === null ? null : Math.round(usd * 100) / 100 } })
+  res.json(await keyOverview(req.userId!))
+}))
+
 // ---------- Kurs-Import ----------
 /** ca. 85.000 Tokens; größere Kurse bitte in Teilen importieren */
 const MAX_COURSE_CHARS = 300_000
@@ -212,13 +265,14 @@ aiRouter.post('/fetch-course', handler(async (req, res) => {
   const { url } = z.object({ url: z.string().trim().min(1, 'Adresse fehlt').max(500) }).parse(req.body)
   await assertFetchLimit(req.userId!)
   await recordFetch(req.userId!)
+  const { keys } = await keysFor(req.userId!)
   const yt = parseYouTube(url)
   if (yt?.kind === 'video') {
-    if (!videoEnabled()) throw new HttpError(503, 'Für YouTube-Videos fehlt auf dem Server der GEMINI_API_KEY')
-    const info = await videoInfo(yt.id).catch(e => { if (e instanceof HttpError && e.status === 404) throw e; return null })
+    requireKey(keys, 'gemini')
+    const info = await videoInfo(keys.youtube, yt.id).catch(e => { if (e instanceof HttpError && e.status === 404) throw e; return null })
     return res.json({ kind: 'video', url: yt.url, title: info?.title ?? '', seconds: info?.seconds ?? null, maxSeconds: MAX_VIDEO_SECONDS })
   }
-  const r = yt?.kind === 'playlist' ? await playlistText(yt.id, MAX_COURSE_CHARS) : await fetchCoursePages(url, MAX_COURSE_CHARS)
+  const r = yt?.kind === 'playlist' ? await playlistText(requireKey(keys, 'youtube'), yt.id, MAX_COURSE_CHARS) : await fetchCoursePages(url, MAX_COURSE_CHARS)
   if (r.text.trim().length < 200) throw new HttpError(422, 'Auf dieser Seite steht kaum Text – kopiere den Inhalt stattdessen oder lade eine Datei hoch')
   res.json({ kind: 'text', ...r })
 }))
@@ -226,18 +280,19 @@ aiRouter.post('/fetch-course', handler(async (req, res) => {
 aiRouter.post('/course', handler(async (req, res) => {
   const body = courseBody.parse(req.body)
   const userId = req.userId!
+  const { keys } = await keysFor(userId)
 
   let src: CourseSource
   let extractor: Extractor
   if ('text' in body) {
     src = { kind: 'text', text: body.text, title: body.title, lang: body.lang }
-    extractor = claudeExtractor()
+    extractor = claudeExtractor(requireKey(keys, 'anthropic'))
   } else {
     const yt = parseYouTube(body.video)
     if (yt?.kind !== 'video') throw new HttpError(400, 'Das ist kein YouTube-Video')
     if (body.start !== undefined && body.end !== undefined && body.end <= body.start) throw new HttpError(400, 'Das Ende des Ausschnitts liegt vor dem Anfang')
-    extractor = geminiExtractor()
-    const info = await videoInfo(yt.id).catch(e => { if (e instanceof HttpError && e.status === 404) throw e; return null })
+    extractor = geminiExtractor(requireKey(keys, 'gemini'))
+    const info = await videoInfo(keys.youtube, yt.id).catch(e => { if (e instanceof HttpError && e.status === 404) throw e; return null })
     src = { kind: 'video', url: yt.url, title: body.title || info?.title || undefined, lang: body.lang, start: body.start, end: body.end, seconds: info?.seconds }
     const clip = clipSeconds(src)
     if (clip !== null && clip > MAX_VIDEO_SECONDS) {

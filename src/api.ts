@@ -45,6 +45,10 @@ export const api = {
   aiStatus: () => request<AiStatus>('/ai/status'),
   aiChat,
   aiCourse,
+  aiKeys: () => request<AiKeys>('/ai/keys'),
+  aiSaveKey: (provider: AiProvider, key: string) => request<AiKeys>(`/ai/keys/${provider}`, json('PUT', { key })),
+  aiDeleteKey: (provider: AiProvider) => request<AiKeys>(`/ai/keys/${provider}`, json('DELETE', {})),
+  aiSetBudget: (usd: number | null) => request<AiKeys>('/ai/budget', json('PUT', { usd })),
   aiFetchCourse: (url: string) => request<FetchedCourse>('/ai/fetch-course', json('POST', { url })),
 
   /** Beim Schließen des Tabs: Request überlebt das Entladen der Seite (max. 64 KB) */
@@ -63,6 +67,14 @@ export interface AiStatus {
   enabled: boolean; model: string; usedUsd: number; budgetUsd: number
   /** Kurs-Import: YouTube-Videos (Gemini) und Playlists (YouTube Data API) eingerichtet? */
   video: boolean; playlists: boolean
+}
+export type AiProvider = 'anthropic' | 'gemini' | 'youtube'
+export interface AiKeys {
+  keys: { provider: AiProvider; last4: string; updatedAt: string }[]
+  serverKeys: AiProvider[]
+  budgetUsd: number | null
+  defaultBudgetUsd: number
+  budgetRange: { min: number; max: number }
 }
 export type FetchedCourse =
   | { kind: 'text'; text: string; pages: { url: string; title: string; chars: number }[] }
