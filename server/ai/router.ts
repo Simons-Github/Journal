@@ -5,7 +5,10 @@ import { requireAuth } from '../auth.js'
 import { HttpError, handler } from '../http.js'
 import { TOOLS, addDays, loadWorkspace, runTool, weekdayName, type Proposal, type Source } from './tools.js'
 import { assertBudget, claudeUsage, dailyBudgetUsd, recordUsage, usedTodayMicros, type Usage } from './usage.js'
-import { claudeExtractor, verifyQuotes, type CourseSource, type VerifiedCourse } from './course.js'
+import { claudeExtractor, verifyQuotes, type CourseSource, type Extractor, type VerifiedCourse } from './course.js'
+import { MAX_VIDEO_SECONDS, clipSeconds, geminiExtractor, videoEnabled } from './gemini.js'
+import { parseYouTube, playlistText, videoInfo } from './youtube.js'
+import { fetchCoursePages } from './fetchPage.js'
 
 /**
  * KI-Assistent: Chat, der Notizen durchsucht, Tasks/Projekte liest und Tasks vorschlägt,
@@ -90,6 +93,9 @@ aiRouter.get('/status', handler(async (req, res) => {
     model: chatModel(),
     usedUsd: (await usedTodayMicros(req.userId!)) / 1e6,
     budgetUsd: dailyBudgetUsd(),
+    /** Was der Kurs-Import auf diesem Server kann */
+    video: videoEnabled(),
+    playlists: Boolean(process.env.YOUTUBE_API_KEY),
   })
 }))
 
@@ -171,22 +177,57 @@ aiRouter.post('/chat', handler(async (req, res) => {
 // ---------- Kurs-Import ----------
 /** ca. 85.000 Tokens; größere Kurse bitte in Teilen importieren */
 const MAX_COURSE_CHARS = 300_000
-const courseBody = z.object({
-  text: z.string().trim().min(200, 'Der Text ist zu kurz für einen Kurs').max(MAX_COURSE_CHARS, 'Der Text ist zu lang (max. 300.000 Zeichen) – bitte in Teilen importieren'),
-  title: z.string().trim().max(200).optional(),
-  lang: z.enum(['de', 'en']).default('de'),
-})
+const lang = z.enum(['de', 'en']).default('de')
+const title = z.string().trim().max(200).optional()
+const seconds = z.number().int().min(0).max(24 * 3600).optional()
+const courseBody = z.union([
+  z.object({
+    text: z.string().trim().min(200, 'Der Text ist zu kurz für einen Kurs').max(MAX_COURSE_CHARS, 'Der Text ist zu lang (max. 300.000 Zeichen) – bitte in Teilen importieren'),
+    title, lang,
+  }),
+  z.object({ video: z.string().max(500), start: seconds, end: seconds, title, lang }),
+])
 
 type CourseEvent =
   | { t: 'progress'; chars: number }
   | { t: 'result'; course: VerifiedCourse; model: string }
   | { t: 'error'; error: string }
 
+/** Link zu einem Kurs auflösen: Kursseite → Text, YouTube-Playlist → Text, YouTube-Video → Hinweis auf Video-Analyse */
+aiRouter.post('/fetch-course', handler(async (req, res) => {
+  const { url } = z.object({ url: z.string().trim().min(1, 'Adresse fehlt').max(500) }).parse(req.body)
+  const yt = parseYouTube(url)
+  if (yt?.kind === 'video') {
+    if (!videoEnabled()) throw new HttpError(503, 'Für YouTube-Videos fehlt auf dem Server der GEMINI_API_KEY')
+    const info = await videoInfo(yt.id).catch(e => { if (e instanceof HttpError && e.status === 404) throw e; return null })
+    return res.json({ kind: 'video', url: yt.url, title: info?.title ?? '', seconds: info?.seconds ?? null, maxSeconds: MAX_VIDEO_SECONDS })
+  }
+  const r = yt?.kind === 'playlist' ? await playlistText(yt.id, MAX_COURSE_CHARS) : await fetchCoursePages(url, MAX_COURSE_CHARS)
+  if (r.text.trim().length < 200) throw new HttpError(422, 'Auf dieser Seite steht kaum Text – kopiere den Inhalt stattdessen oder lade eine Datei hoch')
+  res.json({ kind: 'text', ...r })
+}))
+
 aiRouter.post('/course', handler(async (req, res) => {
   const body = courseBody.parse(req.body)
   const userId = req.userId!
-  const src: CourseSource = { kind: 'text', text: body.text, title: body.title, lang: body.lang }
-  const extractor = claudeExtractor()
+
+  let src: CourseSource
+  let extractor: Extractor
+  if ('text' in body) {
+    src = { kind: 'text', text: body.text, title: body.title, lang: body.lang }
+    extractor = claudeExtractor()
+  } else {
+    const yt = parseYouTube(body.video)
+    if (yt?.kind !== 'video') throw new HttpError(400, 'Das ist kein YouTube-Video')
+    if (body.start !== undefined && body.end !== undefined && body.end <= body.start) throw new HttpError(400, 'Das Ende des Ausschnitts liegt vor dem Anfang')
+    extractor = geminiExtractor()
+    const info = await videoInfo(yt.id).catch(e => { if (e instanceof HttpError && e.status === 404) throw e; return null })
+    src = { kind: 'video', url: yt.url, title: body.title || info?.title || undefined, lang: body.lang, start: body.start, end: body.end, seconds: info?.seconds }
+    const clip = clipSeconds(src)
+    if (clip !== null && clip > MAX_VIDEO_SECONDS) {
+      throw new HttpError(422, 'Das Video ist länger als 2 Stunden – bitte einen Ausschnitt wählen und den Rest in weiteren Durchgängen importieren')
+    }
+  }
   await assertBudget(userId, extractor.estimateMicros(src))
 
   // Die Analyse dauert oft 30–120 Sekunden: Fortschritt streamen, damit die Verbindung offen bleibt
@@ -198,14 +239,20 @@ aiRouter.post('/course', handler(async (req, res) => {
   const abort = new AbortController()
   res.on('close', () => { if (!res.writableFinished) abort.abort() })
 
-  let last = 0
+  let last = 0, chars = 0
+  // Lebenszeichen, auch wenn der Anbieter nicht streamt (Gemini)
+  const beat = setInterval(() => { if (Date.now() - last > 10_000) { last = Date.now(); send({ t: 'progress', chars }) } }, 5000)
   try {
     const { course, usage, model } = await extractor.extract(src, {
       signal: abort.signal,
-      onProgress: chars => { if (Date.now() - last > 1000) { last = Date.now(); send({ t: 'progress', chars }) } },
+      onProgress: n => { chars = n; if (Date.now() - last > 1000) { last = Date.now(); send({ t: 'progress', chars }) } },
     })
     await recordUsage(userId, model, usage)
-    send({ t: 'result', course: verifyQuotes(course, body.text), model })
+    const result: VerifiedCourse = src.kind === 'text'
+      ? verifyQuotes(course, src.text)
+      // Videos lassen sich nicht wörtlich prüfen; stattdessen führen Zeitstempel zur Stelle im Video
+      : { ...course, source: { kind: 'video', url: src.url }, units: course.units.map(u => ({ ...u, items: u.items.map(i => ({ ...i, verified: true })) })) }
+    send({ t: 'result', course: result, model })
   } catch (e) {
     // Auch fehlgeschlagene Analysen haben Tokens gekostet
     const failed = e as { usage?: Usage; model?: string }
@@ -215,6 +262,7 @@ aiRouter.post('/course', handler(async (req, res) => {
       send({ t: 'error', error: userMessage(e) })
     }
   } finally {
+    clearInterval(beat)
     res.end()
   }
 }))

@@ -8,6 +8,9 @@ const PRICES: Record<string, { input: number; output: number }> = {
   'claude-sonnet-5-5': { input: 2, output: 10 },
   'claude-sonnet-5': { input: 2, output: 10 },
   'claude-opus-5-5': { input: 4, output: 20 },
+  // Gemini (Video-Eingabe; Ausgabe inkl. Denk-Tokens). 3.8 Flash: Einführungspreis bis Ende 2026
+  'gemini-3.5-flash-lite': { input: 0.30, output: 2.50 },
+  'gemini-3.8-flash': { input: 0.75, output: 3.75 },
 }
 /** Unbekanntes Modell: lieber zu hoch schätzen */
 export const priceOf = (model: string) => PRICES[model] ?? PRICES['claude-opus-5-5']

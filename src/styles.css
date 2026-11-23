@@ -814,3 +814,18 @@ h1, h2, h3, p { margin: 0; }
   .ci-rows li > .ci-kind-tag { margin-left: 24px; }
   .ci-weeks { max-height: none; }
 }
+
+/* Kurs-Import: Link, Video, Zeitstempel */
+.ci-link { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ci-link svg { color: var(--accent); flex: none; }
+.ci-link input { flex: 1; min-width: 0; }
+.ci-hint { margin: -4px 0 10px; }
+.ci-video { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--paper); box-shadow: 0 0 0 1px var(--line); }
+.ci-video-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ci-video-head svg { color: var(--accent); flex: none; }
+.ci-video-head .ai-link { margin-left: auto; }
+.ci-range { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.ci-range label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.ci-range input { width: 110px; }
+.ci-ts { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; flex: none; padding: 1px 6px; border-radius: 6px; }
+.ci-ts:hover { background: var(--accent-soft); }

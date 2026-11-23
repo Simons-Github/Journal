@@ -12,6 +12,18 @@ export interface CourseItem { kind: Kind; title: string; hours: number; quote: s
 export interface CourseUnit { week: number; title: string; items: CourseItem[] }
 export interface Course {
   title: string; provider: string; summary: string; weeks_inferred: boolean; warnings: string[]; units: CourseUnit[]
+  /** Aus einem Video: Zitate beginnen mit einem Zeitstempel in diesem Video */
+  source?: { kind: 'video'; url: string }
+}
+
+/** Zeitstempel am Anfang eines Zitats („1:02:10 – …“) als Link auf diese Stelle im Video */
+export function timestampLink(videoUrl: string, quote: string): { label: string; href: string } | null {
+  const m = /^\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/.exec(quote)
+  if (!m) return null
+  const secs = Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3])
+  const u = new URL(videoUrl)
+  u.searchParams.set('t', `${secs}s`)
+  return { label: m[0].trim(), href: u.toString() }
 }
 
 export const KIND_LABEL: Record<Kind, string> = {

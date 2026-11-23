@@ -1,8 +1,8 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, Check as CheckIcon, FileUp, GraduationCap } from 'lucide-react'
-import { ApiError, api } from '../api'
-import { ALL_KINDS, Course, KIND_LABEL, Kind, Pace, PlannedTask, overviewNote, plan, totalHours } from '../course'
+import { AlertTriangle, Check as CheckIcon, FileUp, GraduationCap, Link as LinkIcon, MonitorPlay, Play } from 'lucide-react'
+import { AiStatus, ApiError, api } from '../api'
+import { ALL_KINDS, Course, KIND_LABEL, Kind, Pace, PlannedTask, overviewNote, plan, timestampLink, totalHours } from '../course'
 import { newNote, newTask, useStore } from '../store'
 import { useSync } from '../sync'
 import { useEditor } from './Editor'
@@ -14,6 +14,18 @@ const MIN_CHARS = 200
 const MAX_CHARS = 300_000
 /** Stunden im Format der Sprache: 7,5 bzw. 7.5 */
 const hrs = (n: number) => n.toLocaleString(locale(), { maximumFractionDigits: 1 })
+
+const fmtSeconds = (s: number) => { const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h} h ${m} min` : `${m} min` }
+type VideoChoice = { seconds: number | null; maxSeconds: number; from: string; to: string }
+function videoRangeOk(v: VideoChoice): boolean {
+  const from = Number(v.from || 0), to = Number(v.to)
+  return Number.isFinite(from) && Number.isFinite(to) && from >= 0 && to > from && (to - from) * 60 <= v.maxSeconds
+}
+/** Grobe Kosten mit Gemini 3.5 Flash-Lite (~132 Tokens pro Sekunde, 0,30 $ pro 1 Mio.) plus Ausgabe */
+function videoCost(v: VideoChoice): string {
+  const secs = Math.max(0, (Number(v.to) - Number(v.from || 0)) * 60)
+  return (secs * 132 * 0.3e-6 + 0.02).toLocaleString(locale(), { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+}
 
 /** Nächster Montag (heute, falls Montag) */
 function nextMonday(): string {
@@ -49,12 +61,17 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
   const [title, setTitle] = useState('')
   const [fileInfo, setFileInfo] = useState('')
   const [error, setError] = useState('')
-  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [status, setStatus] = useState<AiStatus | null>(null)
+  const enabled = status?.enabled ?? null
+  const [link, setLink] = useState('')
+  const [loadingLink, setLoadingLink] = useState(false)
+  /** Ein YouTube-Video statt Text: Gemini analysiert es direkt */
+  const [video, setVideo] = useState<{ url: string; title: string; seconds: number | null; maxSeconds: number; from: string; to: string } | null>(null)
   const abort = useRef<AbortController | null>(null)
   const [, tick] = useState(0)
 
   useEffect(() => {
-    if (sync.auth) api.aiStatus().then(s => setEnabled(s.enabled)).catch(() => setEnabled(null))
+    if (sync.auth) api.aiStatus().then(setStatus).catch(() => setStatus(null))
   }, [sync.auth])
   // Sekundenzähler während der Analyse
   useEffect(() => {
@@ -92,6 +109,33 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
     }
   }
 
+  /** Kursseite, Playlist oder Video laden: Seiten und Playlists werden zu Text, den du vor der Analyse siehst */
+  async function loadLink() {
+    if (!link.trim()) return
+    setError(''); setLoadingLink(true)
+    try {
+      const r = await api.aiFetchCourse(link.trim())
+      if (r.kind === 'video') {
+        const end = r.seconds ? Math.min(r.seconds, r.maxSeconds) : r.maxSeconds
+        setVideo({ url: r.url, title: r.title, seconds: r.seconds, maxSeconds: r.maxSeconds, from: '0', to: String(Math.round(end / 60)) })
+        if (r.title && !title) setTitle(r.title)
+      } else {
+        setVideo(null)
+        setText(r.text)
+        const playlist = r.pages[0]?.url.includes('youtube.com/playlist')
+        setFileInfo(playlist
+          ? t('Playlist „{title}“: {n} Videos', { title: r.pages[0].title, n: r.pages[0].chars })
+          : t(r.pages.length === 1 ? '1 Seite geladen: {titles}' : '{n} Seiten geladen: {titles}', { n: r.pages.length, titles: r.pages.map(p => p.title.split(' | ')[0]).join(', ') }))
+        // OCW-Titel sind „Seite | Kurs | Fach | MIT OpenCourseWare“ – der Kursname steht vorne
+        if (!title && r.pages[0]?.title) setTitle(r.pages[0].title.split(' | ')[0])
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? t(e.message) : t('Unbekannter Fehler'))
+    } finally {
+      setLoadingLink(false)
+    }
+  }
+
   async function analyse() {
     setError('')
     await sync.flush().catch(() => {})
@@ -100,7 +144,10 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
     setStep({ s: 'running', started: Date.now(), chars: 0 })
     let course: Course | null = null
     try {
-      await api.aiCourse({ text, title: title.trim() || undefined, lang }, e => {
+      const req = video
+        ? { video: video.url, start: Math.round(Number(video.from) * 60) || undefined, end: video.to ? Math.round(Number(video.to) * 60) : undefined, title: title.trim() || undefined, lang }
+        : { text, title: title.trim() || undefined, lang }
+      await api.aiCourse(req, e => {
         if (e.t === 'progress') setStep(s => (s.s === 'running' ? { ...s, chars: e.chars } : s))
         else if (e.t === 'result') course = e.course
         else if (e.t === 'error') setError(t(e.error))
@@ -132,6 +179,35 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
     body = (
       <>
         <p className="ci-lead">{t('Lade Syllabus, Kalender oder Aufgabenliste eines Kurses hoch – z. B. von MIT OpenCourseWare – oder füge den Text ein. Die KI liest die Struktur heraus, die Termine plant die App. Gespeichert wird erst nach deiner Prüfung.')}</p>
+        <div className="ci-link">
+          <LinkIcon size={17} strokeWidth={1.9} />
+          <input value={link} onChange={e => setLink(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadLink()} inputMode="url"
+            placeholder={t('Link zur Kursseite, YouTube-Playlist oder zum Video')} aria-label={t('Link zur Kursseite, YouTube-Playlist oder zum Video')} />
+          <button className="btn" onClick={loadLink} disabled={!link.trim() || loadingLink}>{loadingLink ? t('Lade …') : t('Laden')}</button>
+        </div>
+        {status && (!status.video || !status.playlists) && (
+          <p className="muted small ci-hint">
+            {!status.video && !status.playlists ? t('YouTube ist auf diesem Server nicht eingerichtet – Kursseiten, Dateien und Text gehen trotzdem.')
+              : !status.video ? t('Einzelne YouTube-Videos sind auf diesem Server nicht eingerichtet (GEMINI_API_KEY).')
+                : t('YouTube-Playlists sind auf diesem Server nicht eingerichtet (YOUTUBE_API_KEY).')}
+          </p>
+        )}
+        {video ? (
+          <div className="ci-video">
+            <div className="ci-video-head">
+              <MonitorPlay size={18} strokeWidth={1.9} />
+              <span className="strong">{video.title || video.url}</span>
+              {video.seconds ? <span className="muted small">{fmtSeconds(video.seconds)}</span> : null}
+              <button className="ai-link" onClick={() => setVideo(null)}>{t('Stattdessen Text verwenden')}</button>
+            </div>
+            <p className="muted small">{t('Gemini sieht und hört das Video und gliedert es in Abschnitte mit Zeitstempeln. Pro Durchgang höchstens {h} Stunden – längere Videos in mehreren Ausschnitten importieren.', { h: video.maxSeconds / 3600 })}</p>
+            <div className="ci-range">
+              <label>{t('Ab Minute')}<input type="number" min={0} value={video.from} onChange={e => setVideo({ ...video, from: e.target.value })} /></label>
+              <label>{t('Bis Minute')}<input type="number" min={1} value={video.to} onChange={e => setVideo({ ...video, to: e.target.value })} /></label>
+              <span className="muted small">{t('ca. {cost} $', { cost: videoCost(video) })}</span>
+            </div>
+          </div>
+        ) : (<>
         <label className="ci-file">
           <FileUp size={18} strokeWidth={1.9} />
           <span>{fileInfo || t('PDF- oder Textdatei wählen')}</span>
@@ -139,15 +215,18 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
         </label>
         <textarea className="ci-text" value={text} onChange={e => { setText(e.target.value); setFileInfo('') }}
           placeholder={t('… oder Text hier einfügen (z. B. die Seiten „Syllabus“ und „Calendar“ eines OCW-Kurses)')} />
+        </>)}
         <div className="ci-row">
           <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('Kurstitel (optional)')} aria-label={t('Kurstitel (optional)')} />
-          <span className={`small ${text.length > MAX_CHARS ? 'ci-warn' : 'muted'}`}>
-            {t('{n} Zeichen', { n: text.length.toLocaleString() })}{text.length > MAX_CHARS ? ` – ${t('zu lang, bitte in Teilen importieren')}` : ''}
-          </span>
+          {!video && (
+            <span className={`small ${text.length > MAX_CHARS ? 'ci-warn' : 'muted'}`}>
+              {t('{n} Zeichen', { n: text.length.toLocaleString() })}{text.length > MAX_CHARS ? ` – ${t('zu lang, bitte in Teilen importieren')}` : ''}
+            </span>
+          )}
         </div>
         {error && <div className="ai-error" role="alert">{error}</div>}
         <div className="ci-actions">
-          <button className="btn primary" onClick={analyse} disabled={tooShort || text.length > MAX_CHARS}>{t('Kurs analysieren')}</button>
+          <button className="btn primary" onClick={analyse} disabled={video ? !videoRangeOk(video) : tooShort || text.length > MAX_CHARS}>{video ? t('Video analysieren') : t('Kurs analysieren')}</button>
           <span className="muted small">{t('Dauert meist 30–120 Sekunden.')}</span>
         </div>
       </>
@@ -251,10 +330,11 @@ function Review({ course, onBack, onDone }: { course: Course; onBack: () => void
         {course.summary && <p className="ci-summary">{course.summary}</p>}
       </div>
 
-      {(course.warnings.length > 0 || course.weeks_inferred || unverified > 0) && (
+      {(course.warnings.length > 0 || course.weeks_inferred || unverified > 0 || course.source) && (
         <div className="ci-warnings">
           <AlertTriangle size={16} strokeWidth={2} />
           <ul>
+            {course.source?.kind === 'video' && <li>{t('Aus einem Video: Die Einträge lassen sich nicht wörtlich prüfen. Die Zeitstempel führen zur passenden Stelle – prüfe ein paar davon.')}</li>}
             {course.weeks_inferred && <li>{t('Im Material gibt es keinen Wochenplan – die KI hat die Einheiten selbst auf Wochen verteilt.')}</li>}
             {unverified > 0 && <li>{t(unverified === 1 ? 'Ein Eintrag ließ sich nicht wörtlich im Material wiederfinden. Er ist markiert – bitte prüfen.' : '{n} Einträge ließen sich nicht wörtlich im Material wiederfinden. Sie sind markiert – bitte prüfen.', { n: unverified })}</li>}
             {course.warnings.map((w, i) => <li key={i}>{w}</li>)}
@@ -313,6 +393,10 @@ function Review({ course, onBack, onDone }: { course: Course; onBack: () => void
                         <AlertTriangle size={14} strokeWidth={2} />
                       </span>
                     )}
+                    {course.source?.kind === 'video' && (() => {
+                      const ts = timestampLink(course.source.url, r.quote)
+                      return ts && <a className="ci-ts" href={ts.href} target="_blank" rel="noreferrer" title={r.quote}><Play size={11} fill="currentColor" />{ts.label}</a>
+                    })()}
                     <span className={`ci-kind-tag k-${r.kind}`}>{t(KIND_LABEL[r.kind])}</span>
                     <span className="muted small ci-hours">{t('{h} h', { h: hrs(r.hours) })}</span>
                     <input type="date" value={r.due} onChange={e => edit(r.key, { due: e.target.value })} aria-label={t('Fällig')} />

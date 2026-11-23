@@ -45,6 +45,7 @@ export const api = {
   aiStatus: () => request<AiStatus>('/ai/status'),
   aiChat,
   aiCourse,
+  aiFetchCourse: (url: string) => request<FetchedCourse>('/ai/fetch-course', json('POST', { url })),
 
   /** Beim Schließen des Tabs: Request überlebt das Entladen der Seite (max. 64 KB) */
   putKeepalive: (data: unknown, baseVersion: number) => {
@@ -58,7 +59,14 @@ export const api = {
 }
 
 // ---------- KI-Assistent ----------
-export interface AiStatus { enabled: boolean; model: string; usedUsd: number; budgetUsd: number }
+export interface AiStatus {
+  enabled: boolean; model: string; usedUsd: number; budgetUsd: number
+  /** Kurs-Import: YouTube-Videos (Gemini) und Playlists (YouTube Data API) eingerichtet? */
+  video: boolean; playlists: boolean
+}
+export type FetchedCourse =
+  | { kind: 'text'; text: string; pages: { url: string; title: string; chars: number }[] }
+  | { kind: 'video'; url: string; title: string; seconds: number | null; maxSeconds: number }
 /** Nachricht im Format der Claude-API; der Browser speichert sie nur und schickt sie unverändert zurück */
 export interface AiMessage { role: 'user' | 'assistant'; content: string | Record<string, unknown>[] }
 export interface AiSource { kind: 'note' | 'book' | 'fog' | 'task' | 'project'; id: string; title: string }
@@ -118,6 +126,6 @@ export type CourseEvent =
   | { t: 'error'; error: string }
 
 /** Kursmaterial analysieren lassen (dauert oft 30–120 Sekunden) */
-function aiCourse(body: { text: string; title?: string; lang: string }, onEvent: (e: CourseEvent) => void, signal?: AbortSignal) {
+function aiCourse(body: { text: string; title?: string; lang: string } | { video: string; start?: number; end?: number; title?: string; lang: string }, onEvent: (e: CourseEvent) => void, signal?: AbortSignal) {
   return streamEvents<CourseEvent>('/ai/course', body, onEvent, signal)
 }
