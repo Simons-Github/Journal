@@ -1,3 +1,5 @@
+import type { Course } from './course'
+
 /** API läuft im selben Vercel-Projekt unter /api (lokal per Vite-Proxy) */
 export const API_URL: string = import.meta.env.VITE_API_URL || '/api'
 
@@ -40,6 +42,11 @@ export const api = {
   versions: () => request<VersionInfo[]>('/workspace/versions'),
   restore: (id: string) => request<RemoteWorkspace>('/workspace/restore', json('POST', { id })),
 
+  aiStatus: () => request<AiStatus>('/ai/status'),
+  aiChat,
+  aiCourse,
+  aiFetchCourse: (url: string) => request<FetchedCourse>('/ai/fetch-course', json('POST', { url })),
+
   /** Beim Schließen des Tabs: Request überlebt das Entladen der Seite (max. 64 KB) */
   putKeepalive: (data: unknown, baseVersion: number) => {
     const body = JSON.stringify({ data, baseVersion })
@@ -49,4 +56,76 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
     }).catch(() => {})
   },
+}
+
+// ---------- KI-Assistent ----------
+export interface AiStatus {
+  enabled: boolean; model: string; usedUsd: number; budgetUsd: number
+  /** Kurs-Import: YouTube-Videos (Gemini) und Playlists (YouTube Data API) eingerichtet? */
+  video: boolean; playlists: boolean
+}
+export type FetchedCourse =
+  | { kind: 'text'; text: string; pages: { url: string; title: string; chars: number }[] }
+  | { kind: 'video'; url: string; title: string; seconds: number | null; maxSeconds: number }
+/** Nachricht im Format der Claude-API; der Browser speichert sie nur und schickt sie unverändert zurück */
+export interface AiMessage { role: 'user' | 'assistant'; content: string | Record<string, unknown>[] }
+export interface AiSource { kind: 'note' | 'book' | 'fog' | 'task' | 'project'; id: string; title: string }
+export interface AiProposal {
+  id: string
+  project: { id: string; name: string } | { newName: string } | null
+  tasks: { title: string; due?: string; priority: '' | 'Hoch' | 'Mittel' | 'Gering' }[]
+}
+export type AiEvent =
+  | { t: 'text'; v: string }
+  | { t: 'tool'; name: string; input: Record<string, unknown> }
+  | { t: 'sources'; items: AiSource[] }
+  | { t: 'proposal'; proposal: AiProposal }
+  | { t: 'done'; messages: AiMessage[]; stop: string | null }
+  | { t: 'error'; error: string }
+
+/** POST mit Antwort als Ereignis-Strom: eine JSON-Zeile pro Ereignis */
+async function streamEvents<E>(path: string, body: unknown, onEvent: (e: E) => void, signal?: AbortSignal): Promise<void> {
+  let res: Response
+  try {
+    res = await fetch(API_URL + path, {
+      method: 'POST', credentials: 'include', signal, body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    })
+  } catch (e) {
+    if (signal?.aborted) throw e
+    throw new ApiError('Server nicht erreichbar', 0)
+  }
+  if (!res.ok || !res.body) {
+    const err = await res.json().catch(() => null)
+    throw new ApiError(err?.error || `Fehler ${res.status}`, res.status, err ?? undefined)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    buf += decoder.decode(value, { stream: !done })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (line) onEvent(JSON.parse(line) as E)
+    }
+    if (done) break
+  }
+}
+
+/** Schickt eine Nachricht an den Assistenten; die Antwort kommt Zeile für Zeile als Ereignis */
+function aiChat(body: { history: AiMessage[]; text: string; lang: string; today: string }, onEvent: (e: AiEvent) => void, signal?: AbortSignal) {
+  return streamEvents<AiEvent>('/ai/chat', body, onEvent, signal)
+}
+
+export type CourseEvent =
+  | { t: 'progress'; chars: number }
+  | { t: 'result'; course: Course; model: string }
+  | { t: 'error'; error: string }
+
+/** Kursmaterial analysieren lassen (dauert oft 30–120 Sekunden) */
+function aiCourse(body: { text: string; title?: string; lang: string } | { video: string; start?: number; end?: number; title?: string; lang: string }, onEvent: (e: CourseEvent) => void, signal?: AbortSignal) {
+  return streamEvents<CourseEvent>('/ai/course', body, onEvent, signal)
 }

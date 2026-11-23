@@ -18,8 +18,26 @@ model User {
 
   workspace Workspace?
   versions  WorkspaceVersion[]
+  aiUsage   AiUsage[]
 
   @@map("users")
+}
+
+/// Verbrauch des KI-Assistenten pro Anfrage an das Modell (für das Tageslimit)
+model AiUsage {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  model        String
+  inputTokens  Int      @map("input_tokens")
+  outputTokens Int      @map("output_tokens")
+  /// Kosten in Millionstel US-Dollar
+  costMicros   Int      @map("cost_micros")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("ai_usage")
 }
 
 /// Aktueller Stand des 12-Week-Mastery-Workspaces (ein JSON-Dokument pro Nutzer)

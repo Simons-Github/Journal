@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Note, useStore } from '../store'
 import { REVIEW_STEPS, addDays, dueLabel, fmtDate, isoDate, parseDate, today, uid } from '../utils'
 import { useEditor } from '../components/Editor'
+import { CourseImportButton } from '../components/CourseImport'
 import { GoalsByArea, ProjectBoard } from '../components/Boards'
 import { AddRow, Empty, PageHeader, Section, Stars, Tabs } from '../components/ui'
 import { locale, t as tr } from '../i18n'
@@ -34,7 +35,7 @@ export default function School() {
     <>
       <PageHeader icon="🎓" title="Study" cover="school" />
 
-      <Section title="Fächer" icon="🏷️">
+      <Section title="Fächer" icon="🏷️" actions={<CourseImportButton />}>
         <div className="gallery">
           {subjects.map(s => (
             <button key={s.id} className="gallery-card" onClick={() => ed.open('resource', s.id)}>
