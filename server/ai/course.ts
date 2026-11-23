@@ -136,10 +136,9 @@ const importModel = () => process.env.AI_IMPORT_MODEL || 'claude-sonnet-5-5'
 const HAS_FALLBACK = ['claude-sonnet-5-5', 'claude-opus-5-5']
 const MAX_OUTPUT = 32_000
 
-export function claudeExtractor(): Extractor {
-  if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, 'Der KI-Assistent ist nicht eingerichtet (ANTHROPIC_API_KEY fehlt)')
+export function claudeExtractor(apiKey: string): Extractor {
   const model = importModel()
-  const client = new Anthropic()
+  const client = new Anthropic({ apiKey })
   return {
     model,
     estimateMicros(src) {

@@ -173,7 +173,12 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
       </div>
     )
   } else if (enabled === false) {
-    body = <div className="ci-empty"><p>{t('Der Assistent ist auf diesem Server noch nicht eingerichtet.')}</p></div>
+    body = (
+      <div className="ci-empty">
+        <p>{t('Der Kurs-Import arbeitet mit deinem eigenen Anthropic-API-Key – die Kosten laufen über dein Konto. Hinterlege ihn einmal in den Einstellungen.')}</p>
+        <Link to="/einstellungen#ki" className="btn primary" onClick={onClose}>{t('Key hinterlegen')}</Link>
+      </div>
+    )
   } else if (step.s === 'source') {
     const tooShort = text.trim().length < MIN_CHARS
     body = (
@@ -187,9 +192,10 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
         </div>
         {status && (!status.video || !status.playlists) && (
           <p className="muted small ci-hint">
-            {!status.video && !status.playlists ? t('YouTube ist auf diesem Server nicht eingerichtet – Kursseiten, Dateien und Text gehen trotzdem.')
-              : !status.video ? t('Einzelne YouTube-Videos sind auf diesem Server nicht eingerichtet (GEMINI_API_KEY).')
-                : t('YouTube-Playlists sind auf diesem Server nicht eingerichtet (YOUTUBE_API_KEY).')}
+            {!status.video && !status.playlists ? t('Für YouTube-Videos und -Playlists hinterlege einen Gemini- bzw. YouTube-Key in den Einstellungen – Kursseiten, Dateien und Text gehen auch ohne.')
+              : !status.video ? t('Für einzelne YouTube-Videos hinterlege einen Gemini-Key in den Einstellungen.')
+                : t('Für YouTube-Playlists hinterlege einen YouTube-Key in den Einstellungen.')}
+            {' '}<Link to="/einstellungen#ki" onClick={onClose}>{t('Zu den Einstellungen')}</Link>
           </p>
         )}
         {video ? (

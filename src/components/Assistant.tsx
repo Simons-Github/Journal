@@ -184,7 +184,10 @@ export function Assistant() {
             <Link to="/einstellungen" className="btn primary" onClick={() => setOpen(false)}>{t('Anmelden oder registrieren')}</Link>
           </div>
         ) : status && !status.enabled ? (
-          <div className="ai-empty"><p>{t('Der Assistent ist auf diesem Server noch nicht eingerichtet.')}</p></div>
+          <div className="ai-empty">
+            <p>{t('Der Assistent arbeitet mit deinem eigenen Anthropic-API-Key – die Kosten laufen über dein Konto. Hinterlege ihn einmal in den Einstellungen.')}</p>
+            <Link to="/einstellungen#ki" className="btn primary" onClick={() => setOpen(false)}>{t('Key hinterlegen')}</Link>
+          </div>
         ) : (
           <>
             <div className="ai-list" ref={listRef} aria-live="polite">

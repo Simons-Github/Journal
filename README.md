@@ -122,7 +122,6 @@ npm run dev                   # app: http://localhost:5180 · API: http://localh
 DATABASE_URL="postgres://…"           # pooled connection used by the API
 DATABASE_URL_UNPOOLED="postgres://…"  # direct connection used for migrations
 JWT_SECRET=""                         # at least 32 characters
-ANTHROPIC_API_KEY=""                  # optional: turns on the AI assistant
 ```
 
 The app works without the API too – it then simply stays local.
@@ -156,8 +155,9 @@ The app works without the API too – it then simply stays local.
 | `workspace_versions` | Backups of earlier states, with the reason they were made |
 | `auth_attempts` | Failed sign-in and sign-up attempts for rate limiting |
 | `ai_usage` | Tokens and cost per AI assistant request, for the daily limit |
+| `user_api_keys` | Each user's own AI API keys, encrypted (AES-256-GCM) |
 
-Deleting an account removes its workspace, all backups and its AI usage records (cascade). Schema: [`prisma/schema.prisma`](prisma/schema.prisma).
+Deleting an account removes its workspace, all backups, its AI usage records and its API keys (cascade). Schema: [`prisma/schema.prisma`](prisma/schema.prisma).
 
 ## CI
 
@@ -198,7 +198,7 @@ Alternatively via the CLI: `vercel link`, `vercel env add JWT_SECRET`, `vercel -
 - [ ] `JWT_SECRET` set for Production **and** Preview (at least 32 characters; changing it signs everyone out)
 - [ ] Custom domain added under *Settings → Domains*
 - [ ] `/api/health` answers `{"ok":true}`
-- [ ] Optional: `ANTHROPIC_API_KEY` set to turn on the AI assistant and course import (`AI_CHAT_MODEL`, `AI_IMPORT_MODEL` and `AI_DAILY_BUDGET_USD` adjust the models and the daily limit per user); optionally `GEMINI_API_KEY` for single YouTube videos and `YOUTUBE_API_KEY` for YouTube playlists
+- [ ] AI features need no server key: every user adds their own API keys under *Settings → AI assistant* and pays for their own usage. Optional: `AI_KEYS_SECRET` (encrypts the stored keys; otherwise derived from `JWT_SECRET` – changing it makes stored keys unreadable), `AI_SERVER_KEY_EMAILS` plus `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `YOUTUBE_API_KEY` to let only these addresses use server keys, `AI_DAILY_BUDGET_USD` for the default daily limit
 - [ ] Registering and signing in work on the live domain
 
 ## Limits & privacy
@@ -209,8 +209,9 @@ Alternatively via the CLI: `vercel link`, `vercel env add JWT_SECRET`, `vercel -
 - No installable app (PWA); on phones it runs in the browser.
 - There are no automated tests yet; CI checks types and the build.
 - Your data lives in your browser and, if you register, in the Postgres database of this deployment.
+- **AI features use each user's own API keys** (Anthropic; optionally Gemini and YouTube). Keys are stored encrypted, verified when saved and never sent back to the browser – only their last four characters are shown. Each user sets their own daily cost limit.
 - The **AI assistant** (signed-in users only) sends what it looks up – notes, books, brain dump pages, tasks, projects and goals – plus your chat messages to Anthropic's Claude API. Journal entries and habits are never sent. Suggested tasks are only saved when you accept them.
-- The **course import** reads PDFs in your browser and sends only the extracted text to the Claude API; the file itself is not uploaded. Dates are planned by the app, and entries the AI could not quote from the material are flagged for review. Course links are fetched by the server (public https pages only; private and local addresses are blocked). YouTube playlists are read through the YouTube Data API; for a single video only its URL is sent to Google's Gemini API, which watches the public video. Chat and import share a daily cost limit per user (default $1). *Settings* has **JSON export** and **delete account**.
+- The **course import** reads PDFs in your browser and sends only the extracted text to the Claude API; the file itself is not uploaded. Dates are planned by the app, and entries the AI could not quote from the material are flagged for review. Course links are fetched by the server (public https pages only; private and local addresses are blocked). YouTube playlists are read through the YouTube Data API; for a single video only its URL is sent to Google's Gemini API, which watches the public video. Chat and import share the user's daily cost limit (default $1). *Settings* has **JSON export** and **delete account**.
 
 Issues and pull requests are welcome. Please do not commit secrets or `.env` files.
 

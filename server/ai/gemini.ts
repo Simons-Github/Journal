@@ -19,8 +19,6 @@ const DEFAULT_SECONDS = 3600
 export const MAX_VIDEO_SECONDS = 2 * 3600
 const MAX_OUTPUT = 32_000
 
-export const videoEnabled = () => Boolean(process.env.GEMINI_API_KEY)
-
 /** Länge des analysierten Abschnitts in Sekunden (oder null, wenn unbekannt) */
 export function clipSeconds(src: { start?: number; end?: number; seconds?: number }): number | null {
   const end = src.end ?? src.seconds
@@ -35,9 +33,7 @@ interface InteractionResponse {
   error?: { message?: string; status?: string }
 }
 
-export function geminiExtractor(): Extractor {
-  const key = process.env.GEMINI_API_KEY
-  if (!key) throw new HttpError(503, 'Für YouTube-Videos fehlt auf dem Server der GEMINI_API_KEY')
+export function geminiExtractor(key: string): Extractor {
   const model = geminiModel()
   return {
     model,
@@ -82,7 +78,7 @@ export function geminiExtractor(): Extractor {
         console.error('[ai/gemini]', res.status, msg)
         if (res.status === 400) throw new HttpError(400, 'Gemini konnte dieses Video nicht verarbeiten (nur öffentliche Videos; bei langen Videos einen Ausschnitt wählen)')
         if (res.status === 429) throw new HttpError(429, 'Gemini ist gerade ausgelastet oder das Kontingent ist aufgebraucht – bitte später erneut versuchen')
-        if (res.status === 401 || res.status === 403) throw new HttpError(503, 'Der GEMINI_API_KEY ist ungültig')
+        if (res.status === 401 || res.status === 403) throw new HttpError(400, 'Dein Gemini-API-Key wurde abgelehnt – bitte in den Einstellungen prüfen')
         throw new HttpError(502, `Fehler bei Gemini (${res.status})`)
       }
 

@@ -28,17 +28,13 @@ export function parseYouTube(raw: string): YouTubeRef | null {
 
 const apiBase = () => process.env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3'
 
-function apiKey(): string {
-  const k = process.env.YOUTUBE_API_KEY
-  if (!k) throw new HttpError(503, 'Für YouTube-Playlists fehlt auf dem Server der YOUTUBE_API_KEY')
-  return k
-}
-
-async function api<T>(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<T> {
-  const q = new URLSearchParams({ ...params, key: apiKey() })
+async function api<T>(key: string, path: string, params: Record<string, string>, signal?: AbortSignal): Promise<T> {
+  const q = new URLSearchParams(params)
   let res: Response
-  try { res = await fetch(`${apiBase()}/${path}?${q}`, { signal }) } catch { throw new HttpError(502, 'YouTube ist nicht erreichbar') }
+  // Key im Header statt in der Adresse, damit er nicht in Logs von Zwischenstationen landet
+  try { res = await fetch(`${apiBase()}/${path}?${q}`, { signal, headers: { 'x-goog-api-key': key } }) } catch { throw new HttpError(502, 'YouTube ist nicht erreichbar') }
   if (res.status === 404) throw new HttpError(404, 'Diese Playlist oder dieses Video gibt es nicht (oder es ist privat)')
+  if (res.status === 400 || res.status === 401 || res.status === 403) throw new HttpError(400, 'Dein YouTube-API-Key wurde abgelehnt – bitte in den Einstellungen prüfen')
   if (!res.ok) throw new HttpError(502, `YouTube antwortet mit Fehler ${res.status}`)
   return res.json() as Promise<T>
 }
@@ -57,9 +53,9 @@ export const fmtDuration = (s: number) => {
 interface VideoItem { id: string; contentDetails?: { duration?: string }; snippet?: { title?: string; channelTitle?: string; description?: string } }
 
 /** Länge und Titel eines Videos (für die Kostenschätzung vor der Analyse) */
-export async function videoInfo(id: string, signal?: AbortSignal): Promise<{ title: string; seconds: number } | null> {
-  if (!process.env.YOUTUBE_API_KEY) return null
-  const r = await api<{ items: VideoItem[] }>('videos', { part: 'snippet,contentDetails', id }, signal)
+export async function videoInfo(key: string | undefined, id: string, signal?: AbortSignal): Promise<{ title: string; seconds: number } | null> {
+  if (!key) return null
+  const r = await api<{ items: VideoItem[] }>(key, 'videos', { part: 'snippet,contentDetails', id }, signal)
   const v = r.items?.[0]
   if (!v) throw new HttpError(404, 'Dieses Video gibt es nicht (oder es ist privat)')
   return { title: v.snippet?.title ?? '', seconds: isoSeconds(v.contentDetails?.duration ?? '') }
@@ -68,8 +64,8 @@ export async function videoInfo(id: string, signal?: AbortSignal): Promise<{ tit
 const MAX_VIDEOS = 300
 
 /** Playlist als Kursmaterial: eine Zeile je Video mit Länge, darunter der Anfang der Beschreibung */
-export async function playlistText(id: string, maxChars: number, signal?: AbortSignal) {
-  const meta = await api<{ items: { snippet: { title: string; channelTitle: string; description: string } }[] }>('playlists', { part: 'snippet', id }, signal)
+export async function playlistText(key: string, id: string, maxChars: number, signal?: AbortSignal) {
+  const meta = await api<{ items: { snippet: { title: string; channelTitle: string; description: string } }[] }>(key, 'playlists', { part: 'snippet', id }, signal)
   const pl = meta.items?.[0]?.snippet
   if (!pl) throw new HttpError(404, 'Diese Playlist gibt es nicht (oder sie ist privat)')
 
@@ -77,7 +73,7 @@ export async function playlistText(id: string, maxChars: number, signal?: AbortS
   let pageToken = ''
   do {
     const page = await api<{ nextPageToken?: string; items: { snippet: { title: string; description: string; resourceId: { videoId: string } } }[] }>(
-      'playlistItems', { part: 'snippet', playlistId: id, maxResults: '50', ...(pageToken ? { pageToken } : {}) }, signal)
+      key, 'playlistItems', { part: 'snippet', playlistId: id, maxResults: '50', ...(pageToken ? { pageToken } : {}) }, signal)
     for (const it of page.items ?? []) {
       if (it.snippet.title === 'Private video' || it.snippet.title === 'Deleted video') continue
       entries.push({ videoId: it.snippet.resourceId.videoId, title: it.snippet.title, description: it.snippet.description ?? '' })
@@ -87,7 +83,7 @@ export async function playlistText(id: string, maxChars: number, signal?: AbortS
 
   const seconds = new Map<string, number>()
   for (let i = 0; i < entries.length; i += 50) {
-    const r = await api<{ items: VideoItem[] }>('videos', { part: 'contentDetails', id: entries.slice(i, i + 50).map(e => e.videoId).join(',') }, signal)
+    const r = await api<{ items: VideoItem[] }>(key, 'videos', { part: 'contentDetails', id: entries.slice(i, i + 50).map(e => e.videoId).join(',') }, signal)
     for (const v of r.items ?? []) seconds.set(v.id, isoSeconds(v.contentDetails?.duration ?? ''))
   }
 
