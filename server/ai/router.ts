@@ -4,10 +4,12 @@ import { z } from 'zod'
 import { requireAuth } from '../auth.js'
 import { HttpError, handler } from '../http.js'
 import { TOOLS, addDays, loadWorkspace, runTool, weekdayName, type Proposal, type Source } from './tools.js'
-import { assertBudget, dailyBudgetUsd, recordUsage, usedTodayMicros } from './usage.js'
+import { assertBudget, claudeUsage, dailyBudgetUsd, recordUsage, usedTodayMicros, type Usage } from './usage.js'
+import { claudeExtractor, verifyQuotes, type CourseSource, type VerifiedCourse } from './course.js'
 
 /**
- * KI-Assistent (Phase 1): Chat, der Notizen durchsucht und Tasks/Projekte liest.
+ * KI-Assistent: Chat, der Notizen durchsucht, Tasks/Projekte liest und Tasks vorschlägt,
+ * dazu der Kurs-Import (Kursmaterial → Kursstruktur, siehe course.ts).
  * Das Modell pro Aufgabe ist per Umgebungsvariable wählbar; weitere Anbieter (z. B. Gemini für
  * YouTube-Kurse) kommen als eigene Module in server/ai/ dazu, nicht in diesen Chat-Loop.
  */
@@ -130,7 +132,7 @@ aiRouter.post('/chat', handler(async (req, res) => {
       }, { signal: abort.signal })
       stream.on('text', v => send({ t: 'text', v }))
       const msg = await stream.finalMessage()
-      await recordUsage(userId, model, msg.usage)
+      await recordUsage(userId, model, claudeUsage(model, msg.usage))
 
       const assistant: Anthropic.MessageParam = { role: 'assistant', content: msg.content }
       messages.push(assistant); added.push(assistant)
@@ -166,4 +168,55 @@ aiRouter.post('/chat', handler(async (req, res) => {
   }
 }))
 
-export type { ChatEvent }
+// ---------- Kurs-Import ----------
+/** ca. 85.000 Tokens; größere Kurse bitte in Teilen importieren */
+const MAX_COURSE_CHARS = 300_000
+const courseBody = z.object({
+  text: z.string().trim().min(200, 'Der Text ist zu kurz für einen Kurs').max(MAX_COURSE_CHARS, 'Der Text ist zu lang (max. 300.000 Zeichen) – bitte in Teilen importieren'),
+  title: z.string().trim().max(200).optional(),
+  lang: z.enum(['de', 'en']).default('de'),
+})
+
+type CourseEvent =
+  | { t: 'progress'; chars: number }
+  | { t: 'result'; course: VerifiedCourse; model: string }
+  | { t: 'error'; error: string }
+
+aiRouter.post('/course', handler(async (req, res) => {
+  const body = courseBody.parse(req.body)
+  const userId = req.userId!
+  const src: CourseSource = { kind: 'text', text: body.text, title: body.title, lang: body.lang }
+  const extractor = claudeExtractor()
+  await assertBudget(userId, extractor.estimateMicros(src))
+
+  // Die Analyse dauert oft 30–120 Sekunden: Fortschritt streamen, damit die Verbindung offen bleibt
+  res.status(200)
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.flushHeaders()
+  const send = (e: CourseEvent) => { if (!res.writableEnded) res.write(JSON.stringify(e) + '\n') }
+  const abort = new AbortController()
+  res.on('close', () => { if (!res.writableFinished) abort.abort() })
+
+  let last = 0
+  try {
+    const { course, usage, model } = await extractor.extract(src, {
+      signal: abort.signal,
+      onProgress: chars => { if (Date.now() - last > 1000) { last = Date.now(); send({ t: 'progress', chars }) } },
+    })
+    await recordUsage(userId, model, usage)
+    send({ t: 'result', course: verifyQuotes(course, body.text), model })
+  } catch (e) {
+    // Auch fehlgeschlagene Analysen haben Tokens gekostet
+    const failed = e as { usage?: Usage; model?: string }
+    if (failed.usage) await recordUsage(userId, failed.model ?? extractor.model, failed.usage).catch(() => {})
+    if (!abort.signal.aborted) {
+      console.error('[ai/course]', e)
+      send({ t: 'error', error: userMessage(e) })
+    }
+  } finally {
+    res.end()
+  }
+}))
+
+export type { ChatEvent, CourseEvent }

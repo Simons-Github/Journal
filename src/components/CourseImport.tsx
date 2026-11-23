@@ -1,0 +1,343 @@
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, Check as CheckIcon, FileUp, GraduationCap } from 'lucide-react'
+import { ApiError, api } from '../api'
+import { ALL_KINDS, Course, KIND_LABEL, Kind, Pace, PlannedTask, overviewNote, plan, totalHours } from '../course'
+import { newNote, newTask, useStore } from '../store'
+import { useSync } from '../sync'
+import { useEditor } from './Editor'
+import { Modal } from './ui'
+import { locale, t, useLang } from '../i18n'
+import { addDays, fmtDate, fmtShort, today, uid } from '../utils'
+
+const MIN_CHARS = 200
+const MAX_CHARS = 300_000
+/** Stunden im Format der Sprache: 7,5 bzw. 7.5 */
+const hrs = (n: number) => n.toLocaleString(locale(), { maximumFractionDigits: 1 })
+
+/** Nächster Montag (heute, falls Montag) */
+function nextMonday(): string {
+  const d = today()
+  const wd = (new Date().getDay() + 6) % 7
+  return wd === 0 ? d : addDays(d, 7 - wd)
+}
+
+type Step =
+  | { s: 'source' }
+  | { s: 'running'; started: number; chars: number }
+  | { s: 'review'; course: Course }
+  | { s: 'done'; projectId: string; name: string; count: number }
+
+/** Knopf „Kurs importieren“ mit dem Dialog dazu */
+export function CourseImportButton({ className = 'chip', onOpen }: { className?: string; onOpen?: () => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button className={className} onClick={() => { onOpen?.(); setOpen(true) }}>
+        <GraduationCap size={15} strokeWidth={1.9} />{t('Kurs importieren')}
+      </button>
+      {open && <CourseImport onClose={() => setOpen(false)} />}
+    </>
+  )
+}
+
+export function CourseImport({ onClose }: { onClose: () => void }) {
+  const sync = useSync()
+  const { lang } = useLang()
+  const [step, setStep] = useState<Step>({ s: 'source' })
+  const [text, setText] = useState('')
+  const [title, setTitle] = useState('')
+  const [fileInfo, setFileInfo] = useState('')
+  const [error, setError] = useState('')
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const abort = useRef<AbortController | null>(null)
+  const [, tick] = useState(0)
+
+  useEffect(() => {
+    if (sync.auth) api.aiStatus().then(s => setEnabled(s.enabled)).catch(() => setEnabled(null))
+  }, [sync.auth])
+  // Sekundenzähler während der Analyse
+  useEffect(() => {
+    if (step.s !== 'running') return
+    const id = window.setInterval(() => tick(n => n + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [step.s])
+  useEffect(() => () => abort.current?.abort(), [])
+
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setError('')
+    try {
+      if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+        setFileInfo(t('Lese {name} …', { name: file.name }))
+        const { pdfText } = await import('../pdfText')
+        const r = await pdfText(file, (n, total) => setFileInfo(t('Lese {name} … Seite {n} von {total}', { name: file.name, n, total })))
+        if (r.text.trim().length < MIN_CHARS) {
+          setFileInfo('')
+          setError(t('In dieser PDF steht kaum Text – vermutlich ist sie eingescannt. Kopiere den Text stattdessen aus der Kursseite.'))
+          return
+        }
+        setText(r.text)
+        setFileInfo(t(r.pages === 1 ? '{name}: 1 Seite' : '{name}: {pages} Seiten', { name: file.name, pages: r.pages }))
+      } else {
+        setText(await file.text())
+        setFileInfo(file.name)
+      }
+      if (!title) setTitle(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '))
+    } catch {
+      setFileInfo('')
+      setError(t('Die Datei konnte nicht gelesen werden.'))
+    }
+  }
+
+  async function analyse() {
+    setError('')
+    await sync.flush().catch(() => {})
+    const ctrl = new AbortController()
+    abort.current = ctrl
+    setStep({ s: 'running', started: Date.now(), chars: 0 })
+    let course: Course | null = null
+    try {
+      await api.aiCourse({ text, title: title.trim() || undefined, lang }, e => {
+        if (e.t === 'progress') setStep(s => (s.s === 'running' ? { ...s, chars: e.chars } : s))
+        else if (e.t === 'result') course = e.course
+        else if (e.t === 'error') setError(t(e.error))
+      }, ctrl.signal)
+    } catch (e) {
+      if (ctrl.signal.aborted) return
+      setError(e instanceof ApiError ? t(e.message) : t('Unbekannter Fehler'))
+    } finally {
+      abort.current = null
+    }
+    if (course) setStep({ s: 'review', course })
+    else setStep({ s: 'source' })
+  }
+
+  const cancel = () => { abort.current?.abort(); setStep({ s: 'source' }) }
+
+  let body
+  if (!sync.auth) {
+    body = (
+      <div className="ci-empty">
+        <p>{t('Für den Kurs-Import brauchst du ein Konto, weil die Analyse über den Server läuft.')}</p>
+        <Link to="/einstellungen" className="btn primary" onClick={onClose}>{t('Anmelden oder registrieren')}</Link>
+      </div>
+    )
+  } else if (enabled === false) {
+    body = <div className="ci-empty"><p>{t('Der Assistent ist auf diesem Server noch nicht eingerichtet.')}</p></div>
+  } else if (step.s === 'source') {
+    const tooShort = text.trim().length < MIN_CHARS
+    body = (
+      <>
+        <p className="ci-lead">{t('Lade Syllabus, Kalender oder Aufgabenliste eines Kurses hoch – z. B. von MIT OpenCourseWare – oder füge den Text ein. Die KI liest die Struktur heraus, die Termine plant die App. Gespeichert wird erst nach deiner Prüfung.')}</p>
+        <label className="ci-file">
+          <FileUp size={18} strokeWidth={1.9} />
+          <span>{fileInfo || t('PDF- oder Textdatei wählen')}</span>
+          <input type="file" accept=".pdf,.txt,.md,.html,.htm,application/pdf,text/*" onChange={onFile} />
+        </label>
+        <textarea className="ci-text" value={text} onChange={e => { setText(e.target.value); setFileInfo('') }}
+          placeholder={t('… oder Text hier einfügen (z. B. die Seiten „Syllabus“ und „Calendar“ eines OCW-Kurses)')} />
+        <div className="ci-row">
+          <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('Kurstitel (optional)')} aria-label={t('Kurstitel (optional)')} />
+          <span className={`small ${text.length > MAX_CHARS ? 'ci-warn' : 'muted'}`}>
+            {t('{n} Zeichen', { n: text.length.toLocaleString() })}{text.length > MAX_CHARS ? ` – ${t('zu lang, bitte in Teilen importieren')}` : ''}
+          </span>
+        </div>
+        {error && <div className="ai-error" role="alert">{error}</div>}
+        <div className="ci-actions">
+          <button className="btn primary" onClick={analyse} disabled={tooShort || text.length > MAX_CHARS}>{t('Kurs analysieren')}</button>
+          <span className="muted small">{t('Dauert meist 30–120 Sekunden.')}</span>
+        </div>
+      </>
+    )
+  } else if (step.s === 'running') {
+    const secs = Math.round((Date.now() - step.started) / 1000)
+    body = (
+      <div className="ci-running">
+        <span className="ai-dot" />
+        <div>
+          <div className="strong">{t('Analysiere den Kurs …')}</div>
+          <div className="muted small">{t('{s} s', { s: secs })}{step.chars ? ` · ${t('{n} Zeichen Struktur erhalten', { n: step.chars.toLocaleString() })}` : ''}</div>
+        </div>
+        <button className="btn" onClick={cancel}>{t('Abbrechen')}</button>
+      </div>
+    )
+  } else if (step.s === 'review') {
+    body = <Review course={step.course} onBack={() => setStep({ s: 'source' })} onDone={(projectId, name, count) => setStep({ s: 'done', projectId, name, count })} />
+  } else {
+    body = <Done {...step} onClose={onClose} />
+  }
+
+  return (
+    <Modal onClose={step.s === 'running' ? () => {} : onClose} wide>
+      <h2 className="ci-title"><GraduationCap size={22} strokeWidth={1.7} />{t('Kurs importieren')}</h2>
+      {body}
+    </Modal>
+  )
+}
+
+function Done({ projectId, name, count, onClose }: { projectId: string; name: string; count: number; onClose: () => void }) {
+  const ed = useEditor()
+  return (
+    <div className="ci-empty">
+      <p className="ci-done"><CheckIcon size={18} strokeWidth={2.2} />{t('Projekt „{name}“ mit {n} Tasks angelegt.', { name, n: count })}</p>
+      <div className="ci-actions">
+        <button className="btn primary" onClick={() => { onClose(); ed.open('project', projectId) }}>{t('Projekt öffnen')}</button>
+        <button className="btn" onClick={onClose}>{t('Schließen')}</button>
+      </div>
+    </div>
+  )
+}
+
+interface Edit { on?: boolean; title?: string; due?: string }
+
+function Review({ course, onBack, onDone }: { course: Course; onBack: () => void; onDone: (projectId: string, name: string, count: number) => void }) {
+  const { db, update } = useStore()
+  const [name, setName] = useState(course.title)
+  const [start, setStart] = useState(nextMonday)
+  const [mode, setMode] = useState<Pace['mode']>('course')
+  const [hours, setHours] = useState(8)
+  const [kinds, setKinds] = useState<Set<Kind>>(() => new Set(ALL_KINDS))
+  const [goalId, setGoalId] = useState('')
+  const [areaId, setAreaId] = useState(() => db.areas.find(a => /schule|school|studium|study/i.test(a.name))?.id ?? '')
+  const [withNote, setWithNote] = useState(true)
+  const [edits, setEdits] = useState<Record<string, Edit>>({})
+
+  const present = useMemo(() => ALL_KINDS.filter(k => course.units.some(u => u.items.some(i => i.kind === k))), [course])
+  const pace: Pace = mode === 'course' ? { mode } : { mode, hoursPerWeek: hours }
+  const planned = useMemo(() => plan(course, start, pace, kinds), [course, start, mode, hours, kinds]) // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = planned.map(p => {
+    const e = edits[p.key] ?? {}
+    return { ...p, on: e.on ?? true, title: e.title ?? p.title, due: e.due ?? p.due }
+  })
+  const chosen = rows.filter(r => r.on && r.title.trim())
+  const unverified = rows.filter(r => !r.verified).length
+  const weeks = [...new Set(rows.map(r => r.planWeek))].sort((a, b) => a - b)
+  const lastDue = chosen.reduce((m, r) => (r.due > m ? r.due : m), '')
+
+  const edit = (key: string, e: Edit) => setEdits(x => ({ ...x, [key]: { ...x[key], ...e } }))
+  // Neue Planung (Start/Tempo): selbst gesetzte Termine verwerfen, Auswahl und Titel behalten
+  const replan = (fn: () => void) => { fn(); setEdits(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, { ...v, due: undefined }]))) }
+  const toggleKind = (k: Kind) => setKinds(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n })
+
+  function create() {
+    if (!chosen.length || !name.trim()) return
+    const projectId = uid()
+    const tasks = chosen.map(r => newTask({ title: r.title.trim(), due: r.due || undefined, priority: r.priority, projectId }))
+    const note = withNote ? newNote({
+      title: t('{name} – Kursübersicht', { name: name.trim() }),
+      type: 'Lernzettel/Mitschrift',
+      areaId: areaId || undefined,
+      content: overviewNote(course, chosen as PlannedTask[], fmtDate, k => t(KIND_LABEL[k]), n => t('Woche {n}', { n })),
+    }) : null
+    update(d => {
+      d.projects.unshift({ id: projectId, name: name.trim(), status: 'Doing', areaId: areaId || undefined, goalId: goalId || undefined })
+      d.tasks.unshift(...tasks)
+      if (note) d.notes.unshift(note)
+    })
+    onDone(projectId, name.trim(), tasks.length)
+  }
+
+  const goals = db.goals.filter(g => !g.done)
+  const areas = db.areas.filter(a => !a.archived)
+
+  return (
+    <div className="ci-review">
+      <div className="ci-course">
+        <input className="ci-name" value={name} onChange={e => setName(e.target.value)} aria-label={t('Projektname')} />
+        {course.provider && <div className="muted small">{course.provider}</div>}
+        {course.summary && <p className="ci-summary">{course.summary}</p>}
+      </div>
+
+      {(course.warnings.length > 0 || course.weeks_inferred || unverified > 0) && (
+        <div className="ci-warnings">
+          <AlertTriangle size={16} strokeWidth={2} />
+          <ul>
+            {course.weeks_inferred && <li>{t('Im Material gibt es keinen Wochenplan – die KI hat die Einheiten selbst auf Wochen verteilt.')}</li>}
+            {unverified > 0 && <li>{t(unverified === 1 ? 'Ein Eintrag ließ sich nicht wörtlich im Material wiederfinden. Er ist markiert – bitte prüfen.' : '{n} Einträge ließen sich nicht wörtlich im Material wiederfinden. Sie sind markiert – bitte prüfen.', { n: unverified })}</li>}
+            {course.warnings.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div className="ci-settings">
+        <label>{t('Start')}<input type="date" value={start} onChange={e => e.target.value && replan(() => setStart(e.target.value))} /></label>
+        <label>{t('Tempo')}
+          <select value={mode} onChange={e => replan(() => setMode(e.target.value as Pace['mode']))}>
+            <option value="course">{t('Wie im Kursplan (1 Kurswoche = 1 Woche)')}</option>
+            <option value="hours">{t('Nach Stunden pro Woche')}</option>
+          </select>
+        </label>
+        {mode === 'hours' && (
+          <label>{t('Stunden pro Woche')}<input type="number" min={1} max={60} value={hours} onChange={e => replan(() => setHours(Math.max(1, Number(e.target.value) || 1)))} /></label>
+        )}
+        <label>{t('Ziel')}
+          <select value={goalId} onChange={e => setGoalId(e.target.value)}>
+            <option value="">{t('– kein Ziel –')}</option>
+            {goals.map(g => <option key={g.id} value={g.id}>{g.title}</option>)}
+          </select>
+        </label>
+        <label>{t('Area')}
+          <select value={areaId} onChange={e => setAreaId(e.target.value)}>
+            <option value="">{t('– keine Area –')}</option>
+            {areas.map(a => <option key={a.id} value={a.id}>{a.icon} {a.name}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div className="ci-kinds" role="group" aria-label={t('Arten')}>
+        {present.map(k => (
+          <button key={k} className={`ci-kind ${kinds.has(k) ? 'on' : ''}`} aria-pressed={kinds.has(k)} onClick={() => replan(() => toggleKind(k))}>{t(KIND_LABEL[k])}</button>
+        ))}
+      </div>
+
+      <div className="ci-weeks">
+        {weeks.map(w => {
+          const ws = rows.filter(r => r.planWeek === w)
+          const from = addDays(start, w * 7)
+          return (
+            <section key={w} className="ci-week">
+              <div className="ci-week-head">
+                <span className="strong">{t('Woche {n}', { n: w + 1 })}</span>
+                <span className="muted small">{fmtShort(from)}–{fmtShort(addDays(from, 6))} · {t('{h} h', { h: hrs(totalHours(ws.filter(r => r.on))) })}</span>
+              </div>
+              <ul className="ci-rows">
+                {ws.map(r => (
+                  <li key={r.key} className={r.on ? '' : 'off'}>
+                    <input type="checkbox" checked={r.on} onChange={e => edit(r.key, { on: e.target.checked })} aria-label={t('Übernehmen')} />
+                    <input className="ci-row-title" value={r.title} onChange={e => edit(r.key, { title: e.target.value })} aria-label={t('Titel')} />
+                    {!r.verified && (
+                      <span className="ci-unverified" title={t('Nicht wörtlich im Material gefunden: „{q}“', { q: r.quote })}>
+                        <AlertTriangle size={14} strokeWidth={2} />
+                      </span>
+                    )}
+                    <span className={`ci-kind-tag k-${r.kind}`}>{t(KIND_LABEL[r.kind])}</span>
+                    <span className="muted small ci-hours">{t('{h} h', { h: hrs(r.hours) })}</span>
+                    <input type="date" value={r.due} onChange={e => edit(r.key, { due: e.target.value })} aria-label={t('Fällig')} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )
+        })}
+        {!rows.length && <div className="empty">{t('Keine Einträge ausgewählt.')}</div>}
+      </div>
+
+      <label className="ci-note"><input type="checkbox" checked={withNote} onChange={e => setWithNote(e.target.checked)} />{t('Übersichtsnotiz mit Zusammenfassung und Wochenplan anlegen')}</label>
+
+      <div className="ci-footer">
+        <span className="muted small">
+          {t('{n} Tasks · {h} h', { n: chosen.length, h: hrs(totalHours(chosen)) })}{lastDue ? ` · ${t('bis {date}', { date: fmtDate(lastDue) })}` : ''}
+        </span>
+        <span className="ci-actions">
+          <button className="btn" onClick={onBack}>{t('Zurück')}</button>
+          <button className="btn primary" onClick={create} disabled={!chosen.length || !name.trim()}>
+            {t('Projekt mit {n} Tasks anlegen', { n: chosen.length })}
+          </button>
+        </span>
+      </div>
+    </div>
+  )
+}

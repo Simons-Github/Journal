@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '../store'
 import { useEditor } from '../components/Editor'
+import { CourseImportButton } from '../components/CourseImport'
 import { ProjectBoard, ProjectTable } from '../components/Boards'
 import { PageHeader, Section, Tabs } from '../components/ui'
 import { t } from '../i18n'
@@ -15,7 +16,7 @@ export default function ProjectHub() {
   return (
     <>
       <PageHeader icon="🏗️" title="Projects" cover="projects" />
-      <Section title="Übersicht" icon="📋" actions={<button className="chip" onClick={() => ed.createProject()}>+ {t('Projekt')}</button>}>
+      <Section title="Übersicht" icon="📋" actions={<><CourseImportButton /><button className="chip" onClick={() => ed.createProject()}>+ {t('Projekt')}</button></>}>
         <Tabs tabs={VIEWS} value={v} onChange={setV} />
         {v === 'Nach Status' && <ProjectBoard projects={active} />}
         {v === 'Nach Bereich' && [{ id: '', icon: '', name: t('Ohne Area') }, ...db.areas].map(a => {

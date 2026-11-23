@@ -5,6 +5,7 @@ import { AiEvent, AiMessage, AiProposal, AiSource, AiStatus, ApiError, api } fro
 import { useSync } from '../sync'
 import { useEditor } from './Editor'
 import { ProposalCard, ProposalResult } from './ProposalCard'
+import { CourseImportButton } from './CourseImport'
 import { t, useLang } from '../i18n'
 import { today } from '../utils'
 
@@ -184,6 +185,7 @@ export function Assistant() {
                   <div className="ai-suggestions">
                     {SUGGESTIONS.map(s => <button key={s} className="ai-suggestion" onClick={() => send(t(s))}>{t(s)}</button>)}
                   </div>
+                  <div><CourseImportButton className="ai-suggestion ai-import" /></div>
                   <p className="muted small">{t('Journal-Einträge und Habits sieht der Assistent nicht.')}</p>
                 </div>
               )}

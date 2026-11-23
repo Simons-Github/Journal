@@ -1,3 +1,5 @@
+import type { Course } from './course'
+
 /** API läuft im selben Vercel-Projekt unter /api (lokal per Vite-Proxy) */
 export const API_URL: string = import.meta.env.VITE_API_URL || '/api'
 
@@ -42,6 +44,7 @@ export const api = {
 
   aiStatus: () => request<AiStatus>('/ai/status'),
   aiChat,
+  aiCourse,
 
   /** Beim Schließen des Tabs: Request überlebt das Entladen der Seite (max. 64 KB) */
   putKeepalive: (data: unknown, baseVersion: number) => {
@@ -72,15 +75,11 @@ export type AiEvent =
   | { t: 'done'; messages: AiMessage[]; stop: string | null }
   | { t: 'error'; error: string }
 
-/** Schickt eine Nachricht an den Assistenten; die Antwort kommt Zeile für Zeile als Ereignis */
-async function aiChat(
-  body: { history: AiMessage[]; text: string; lang: string; today: string },
-  onEvent: (e: AiEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
+/** POST mit Antwort als Ereignis-Strom: eine JSON-Zeile pro Ereignis */
+async function streamEvents<E>(path: string, body: unknown, onEvent: (e: E) => void, signal?: AbortSignal): Promise<void> {
   let res: Response
   try {
-    res = await fetch(API_URL + '/ai/chat', {
+    res = await fetch(API_URL + path, {
       method: 'POST', credentials: 'include', signal, body: JSON.stringify(body),
       headers: { 'Content-Type': 'application/json' },
     })
@@ -102,8 +101,23 @@ async function aiChat(
     while ((nl = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, nl).trim()
       buf = buf.slice(nl + 1)
-      if (line) onEvent(JSON.parse(line) as AiEvent)
+      if (line) onEvent(JSON.parse(line) as E)
     }
     if (done) break
   }
+}
+
+/** Schickt eine Nachricht an den Assistenten; die Antwort kommt Zeile für Zeile als Ereignis */
+function aiChat(body: { history: AiMessage[]; text: string; lang: string; today: string }, onEvent: (e: AiEvent) => void, signal?: AbortSignal) {
+  return streamEvents<AiEvent>('/ai/chat', body, onEvent, signal)
+}
+
+export type CourseEvent =
+  | { t: 'progress'; chars: number }
+  | { t: 'result'; course: Course; model: string }
+  | { t: 'error'; error: string }
+
+/** Kursmaterial analysieren lassen (dauert oft 30–120 Sekunden) */
+function aiCourse(body: { text: string; title?: string; lang: string }, onEvent: (e: CourseEvent) => void, signal?: AbortSignal) {
+  return streamEvents<CourseEvent>('/ai/course', body, onEvent, signal)
 }
