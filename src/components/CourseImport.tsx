@@ -41,19 +41,20 @@ type Step =
   | { s: 'done'; projectId: string; name: string; count: number }
 
 /** Knopf „Kurs importieren“ mit dem Dialog dazu */
-export function CourseImportButton({ className = 'chip', onOpen }: { className?: string; onOpen?: () => void }) {
+export function CourseImportButton({ className = 'chip', onOpen, initialLink, label }: { className?: string; onOpen?: () => void; initialLink?: string; label?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <>
       <button className={className} onClick={() => { onOpen?.(); setOpen(true) }}>
-        <GraduationCap size={15} strokeWidth={1.9} />{t('Kurs importieren')}
+        <GraduationCap size={15} strokeWidth={1.9} />{label ?? t('Kurs importieren')}
       </button>
-      {open && <CourseImport onClose={() => setOpen(false)} />}
+      {open && <CourseImport onClose={() => setOpen(false)} initialLink={initialLink} />}
     </>
   )
 }
 
-export function CourseImport({ onClose }: { onClose: () => void }) {
+/** `initialLink`: Link aus dem Chat – wird direkt geladen, sobald der Dialog bereit ist */
+export function CourseImport({ onClose, initialLink }: { onClose: () => void; initialLink?: string }) {
   const sync = useSync()
   const { lang } = useLang()
   const [step, setStep] = useState<Step>({ s: 'source' })
@@ -63,7 +64,8 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('')
   const [status, setStatus] = useState<AiStatus | null>(null)
   const enabled = status?.enabled ?? null
-  const [link, setLink] = useState('')
+  const [link, setLink] = useState(initialLink ?? '')
+  const autoLoaded = useRef(false)
   const [loadingLink, setLoadingLink] = useState(false)
   /** Ein YouTube-Video statt Text: Gemini analysiert es direkt */
   const [video, setVideo] = useState<{ url: string; title: string; seconds: number | null; maxSeconds: number; from: string; to: string } | null>(null)
@@ -80,6 +82,10 @@ export function CourseImport({ onClose }: { onClose: () => void }) {
     return () => window.clearInterval(id)
   }, [step.s])
   useEffect(() => () => abort.current?.abort(), [])
+  useEffect(() => {
+    if (initialLink && status?.enabled && !autoLoaded.current) { autoLoaded.current = true; loadLink() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status])
 
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]

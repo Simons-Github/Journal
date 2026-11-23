@@ -848,3 +848,9 @@ h1, h2, h3, p { margin: 0; }
 .ai-budget label { display: flex; flex-direction: column; gap: 2px; }
 .ai-budget-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ai-budget-row input { width: 110px; }
+
+/* Chat: Knopf für den Kurs-Import mit Link */
+.ai-import-card { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.ai-import-card > .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 160px; }
+.ai-import-card > .btn { padding: 7px 13px; font-size: 13.5px; }
+a.ai-source { text-decoration: none; }

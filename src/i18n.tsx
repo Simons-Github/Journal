@@ -676,6 +676,12 @@ const EN: Record<string, string> = {
   'Das sieht nicht nach einem API-Key aus': 'That doesn’t look like an API key',
   'Der Key darf keine Leerzeichen enthalten': 'The key must not contain spaces',
   'Zu viele Versuche – bitte in einer Stunde erneut versuchen': 'Too many attempts – please try again in an hour',
+  // Webseiten im Chat
+  'Lese {host}': 'Reading {host}',
+  'Lese {host} mit Unterseiten': 'Reading {host} and its subpages',
+  'Bereite den Kurs-Import vor': 'Preparing the course import',
+  'Kurs-Import mit diesem Link öffnen': 'Open course import with this link',
+  'Gib mir einen Link zu einer Kursseite – ich lese sie und schlage Tasks vor.': 'Give me a link to a course page – I’ll read it and suggest tasks.',
   'Journal-Einträge und Habits sieht der Assistent nicht.': 'The assistant can’t see journal entries or habits.',
   'Der Assistent durchsucht deine Notizen und hilft dir beim Planen. Dafür brauchst du ein Konto, weil er auf deinen synchronisierten Stand zugreift.': 'The assistant searches your notes and helps you plan. It needs an account because it works with your synced data.',
   'Anmelden oder registrieren': 'Sign in or register',
