@@ -38,7 +38,7 @@ The app started as a rebuild of the Notion template "12 Week Mastery". It keeps 
 | React 18, TypeScript, React Router, Vite | Frontend |
 | Hand-written CSS with light and dark tokens, Lucide icons | Styling |
 | Express, as one Vercel Function under `/api` | API; one deployment for app and API |
-| PostgreSQL (Neon on Vercel, `prisma dev` locally), Prisma | Storage |
+| PostgreSQL (Neon on Vercel, `prisma dev` locally), Prisma 7 with the `pg` driver adapter | Storage |
 | JWT in an httpOnly cookie, bcrypt, Zod | Auth and validation |
 | Anthropic SDK; optional Gemini and YouTube Data API | Assistant and course import |
 | GitHub Actions (Node 22), Vercel | CI and hosting |
@@ -67,7 +67,7 @@ Browser (React)
 
 ## Running locally
 
-Requires Node.js 20 or newer and npm.
+Requires Node.js 22.12 or newer and npm.
 
 ```bash
 npm install

@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Node.js 20 or newer (CI uses 22) and npm.
+Node.js 22.12 or newer (required by Vitest 5) and npm.
 
 ## Setup
 
@@ -38,7 +38,7 @@ See [`.env.example`](../.env.example) for the full list with comments.
 | `npm run dev` | Starts the frontend (Vite) and the API together |
 | `npm run dev:web` / `npm run dev:api` | Starts only one of them |
 | `npm run db:start` | Starts the local Postgres |
-| `npm run db:migrate` | Creates a new migration and applies it |
+| `npm run db:migrate` | Creates a new migration, applies it and regenerates the client |
 | `npm test` | Runs the Vitest suite once (no database needed) |
 | `npm run build` | Type-checks app and server, then builds for production |
 | `npm run preview` | Serves the production build locally |
@@ -77,8 +77,10 @@ src/
 ├── i18n.tsx          # English translations (German text is the key)
 └── styles.css        # Design tokens and all styles
 server/               # Express API: auth, workspace, AI assistant
+server/generated/     # Prisma Client, generated on npm install (not versioned)
 api/index.ts          # Vercel Function entry point
 prisma/               # Schema and migrations
+prisma.config.ts      # Prisma CLI config: migrations use DATABASE_URL_UNPOOLED
 docs/screenshots/     # Images used in the README
 ```
 

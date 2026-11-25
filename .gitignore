@@ -12,3 +12,6 @@ AGENTS.md
 .cursor/
 .agents/
 skills-lock.json
+
+# Prisma Client (wird bei npm install erzeugt)
+server/generated/

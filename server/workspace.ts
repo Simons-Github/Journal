@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import type { Prisma } from '@prisma/client'
+import type { Prisma } from './generated/prisma/client.js'
 import { z } from 'zod'
 import { prisma } from './db.js'
 import { requireAuth } from './auth.js'

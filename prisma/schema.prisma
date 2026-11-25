@@ -1,13 +1,13 @@
 generator client {
-  provider = "prisma-client-js"
+  provider            = "prisma-client"
+  output              = "../server/generated/prisma"
+  // Server läuft als ESM mit NodeNext: Importe im erzeugten Client brauchen „.js“
+  importFileExtension = "js"
 }
 
+// Verbindungen stehen in prisma.config.ts (CLI) und server/db.ts (Laufzeit)
 datasource db {
-  provider  = "postgresql"
-  // Auf Vercel + Neon: gepoolte Verbindung für die Functions …
-  url       = env("DATABASE_URL")
-  // … und direkte Verbindung für Migrationen
-  directUrl = env("DATABASE_URL_UNPOOLED")
+  provider = "postgresql"
 }
 
 model User {
