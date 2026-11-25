@@ -81,7 +81,9 @@ More in [docs/development.md](docs/development.md) (environment variables, scrip
 
 ## Testing
 
-There are no automated tests yet. CI runs `npm run build`, which type-checks the app and the server and builds the frontend.
+`npm test` runs the [Vitest](https://vitest.dev) suite. It covers the date helpers and progress calculations, the workspace sync rules (409 on a stale version, the 4 MB limit, automatic backups) through the real Express app with an in-memory Prisma stand-in, the SSRF checks of the course-page fetcher, and the AES-256-GCM encryption of stored API keys. No database or network is needed.
+
+CI runs the tests and then `npm run build`, which type-checks the app and the server and builds the frontend.
 
 ## Limitations
 
