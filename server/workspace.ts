@@ -32,7 +32,7 @@ async function snapshot(tx: Tx, userId: string, current: Row, reason: string | u
 
 /** Grundstruktur prüfen, damit beschädigte Clients keine kaputten Daten speichern */
 const COLLECTIONS = ['habits', 'days', 'evenings', 'weeks', 'areas', 'resources', 'goals', 'projects', 'tasks', 'notes', 'books', 'fog', 'timetable'] as const
-const workspaceData = z.record(z.unknown()).superRefine((d, ctx) => {
+const workspaceData = z.record(z.string(), z.unknown()).superRefine((d, ctx) => {
   for (const key of COLLECTIONS) {
     if (key in d && !Array.isArray(d[key])) ctx.addIssue({ code: 'custom', message: `Ungültiger Workspace: „${key}“ muss eine Liste sein` })
   }

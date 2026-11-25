@@ -57,7 +57,7 @@ function systemPrompt(lang: 'de' | 'en', today: string): string {
 }
 
 // ---------- Anfrage ----------
-const blockList = z.array(z.record(z.unknown())).max(200)
+const blockList = z.array(z.record(z.string(), z.unknown())).max(200)
 const chatBody = z.object({
   /** Bisheriger Verlauf, genau wie ihn der Server in früheren Antworten geliefert hat */
   history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.union([z.string().max(20_000), blockList]) })).max(120),
@@ -188,7 +188,7 @@ aiRouter.post('/chat', handler(async (req, res) => {
         } catch (e) {
           if (abort.signal.aborted) throw e
           if (e instanceof HttpError) { results.push({ type: 'tool_result', tool_use_id: block.id, content: e.message, is_error: true }); continue }
-          const detail = e instanceof z.ZodError ? e.errors.map(x => `${x.path.join('.')}: ${x.message}`).join('; ') : 'Werkzeug fehlgeschlagen'
+          const detail = e instanceof z.ZodError ? e.issues.map(x => `${x.path.join('.')}: ${x.message}`).join('; ') : 'Werkzeug fehlgeschlagen'
           results.push({ type: 'tool_result', tool_use_id: block.id, content: `Ungültige Eingabe: ${detail}`, is_error: true })
         }
       }

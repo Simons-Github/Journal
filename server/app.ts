@@ -40,7 +40,7 @@ app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Route nicht gefun
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  if (err instanceof ZodError) return res.status(err.errors[0]?.code === 'custom' ? 422 : 400).json({ error: err.errors[0]?.message || 'Ungültige Eingabe' })
+  if (err instanceof ZodError) return res.status(err.issues[0]?.code === 'custom' ? 422 : 400).json({ error: err.issues[0]?.message || 'Ungültige Eingabe' })
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.body })
   if (err && typeof err === 'object' && 'type' in err && err.type === 'entity.too.large') {
     return res.status(413).json({ error: 'Anfrage ist zu groß' })
