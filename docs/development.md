@@ -39,6 +39,7 @@ See [`.env.example`](../.env.example) for the full list with comments.
 | `npm run dev:web` / `npm run dev:api` | Starts only one of them |
 | `npm run db:start` | Starts the local Postgres |
 | `npm run db:migrate` | Creates a new migration and applies it |
+| `npm test` | Runs the Vitest suite once (no database needed) |
 | `npm run build` | Type-checks app and server, then builds for production |
 | `npm run preview` | Serves the production build locally |
 
@@ -83,7 +84,7 @@ docs/screenshots/     # Images used in the README
 
 ## CI
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs `npm ci` and `npm run build` on Node 22 for pushes and pull requests to `main`.
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs `npm ci`, `npm test` and `npm run build` on Node 22 for pushes and pull requests to `main`.
 
 ## Privacy details
 

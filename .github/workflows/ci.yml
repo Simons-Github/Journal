@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Type-check & build
+    name: Test, type-check & build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,4 +17,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test
       - run: npm run build
