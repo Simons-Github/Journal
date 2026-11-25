@@ -14,14 +14,20 @@ const MAX_BYTES = 2 * 1024 * 1024
 const TIMEOUT_MS = 15_000
 const MAX_REDIRECTS = 3
 
-function isPrivateIp(ip: string): boolean {
+export function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
     const [a, b] = ip.split('.').map(Number)
     return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19)) || a >= 224
   }
   const v6 = ip.toLowerCase()
-  if (v6.startsWith('::ffff:')) return isPrivateIp(v6.slice(7))
+  if (v6.startsWith('::ffff:')) {
+    // IPv4-mapped: URLs machen aus [::ffff:127.0.0.1] [::ffff:7f00:1], deshalb auch die Hex-Form prüfen
+    const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6.slice(7))
+    if (!hex) return isPrivateIp(v6.slice(7))
+    const hi = parseInt(hex[1], 16), lo = parseInt(hex[2], 16)
+    return isPrivateIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
+  }
   return v6 === '::' || v6 === '::1' || v6.startsWith('fc') || v6.startsWith('fd') || v6.startsWith('fe8') || v6.startsWith('fe9') ||
     v6.startsWith('fea') || v6.startsWith('feb') || v6.startsWith('ff')
 }
