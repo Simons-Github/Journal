@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { CalendarRange, Moon, NotebookPen, Plus, Sun } from 'lucide-react'
 import { PRIORITIES, useStore } from '../store'
 import { REVIEW_STEPS, addDays, diffDays, fmtDate, startOfWeek, today } from '../utils'

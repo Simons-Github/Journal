@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { Check as CheckIcon, ExternalLink, KeyRound } from 'lucide-react'
 import { AiKeys, AiProvider, ApiError, api } from '../api'
 import { Section } from './ui'

@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router'
 import { ArrowUp, BookOpen, Brain, Globe, NotebookPen, Plus, Sparkles, Square, X } from 'lucide-react'
 import { AiEvent, AiMessage, AiProposal, AiSource, AiStatus, ApiError, api } from '../api'
 import { useSync } from '../sync'

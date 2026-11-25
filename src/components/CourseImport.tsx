@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { AlertTriangle, Check as CheckIcon, FileUp, GraduationCap, Link as LinkIcon, MonitorPlay, Play } from 'lucide-react'
 import { AiStatus, ApiError, api } from '../api'
 import { ALL_KINDS, Course, KIND_LABEL, Kind, Pace, PlannedTask, overviewNote, plan, timestampLink, totalHours } from '../course'

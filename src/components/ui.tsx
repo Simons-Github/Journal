@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useLayoutEffect, useRef } from 'react'
 
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { CalendarRange, Moon, Sun } from 'lucide-react'
 import { navFor } from '../nav'
 import { t } from '../i18n'

@@ -1,5 +1,5 @@
 import { Fragment, ReactNode, useEffect, useState } from 'react'
-import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router'
 import { Ellipsis, House, ListChecks, Monitor, Moon, Repeat, Settings as SettingsIcon, Sun, Sunrise, X } from 'lucide-react'
 import { StoreProvider } from './store'
 import { EditorProvider } from './components/Editor'

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router'
 import { EVENING_CHECKS, WEEK_CHECKS, habitRate, useStore } from '../store'
 import { addDays, fmtDate, startOfWeek, today, uid, weekday } from '../utils'
 import { useEditor } from '../components/Editor'
