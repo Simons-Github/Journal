@@ -1,0 +1,99 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../server/generated/prisma"
+  // Server läuft als ESM mit NodeNext: Importe im erzeugten Client brauchen „.js“
+  importFileExtension = "js"
+}
+
+// Verbindungen stehen in prisma.config.ts (CLI) und server/db.ts (Laufzeit)
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  /// Eigenes Tageslimit für die KI in US-Dollar (leer = Standard des Servers)
+  aiDailyBudgetUsd Float? @map("ai_daily_budget_usd")
+
+  workspace Workspace?
+  versions  WorkspaceVersion[]
+  aiUsage   AiUsage[]
+  apiKeys   UserApiKey[]
+
+  @@map("users")
+}
+
+/// Verbrauch des KI-Assistenten pro Anfrage an das Modell (für das Tageslimit)
+model AiUsage {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  model        String
+  inputTokens  Int      @map("input_tokens")
+  outputTokens Int      @map("output_tokens")
+  /// Kosten in Millionstel US-Dollar
+  costMicros   Int      @map("cost_micros")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("ai_usage")
+}
+
+/// Aktueller Stand des 12-Week-Mastery-Workspaces (ein JSON-Dokument pro Nutzer)
+model Workspace {
+  userId    String   @id @map("user_id")
+  data      Json
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("workspaces")
+}
+
+/// Sicherungskopien früherer Stände, um Fehler rückgängig machen zu können
+model WorkspaceVersion {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  version   Int
+  data      Json
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("workspace_versions")
+}
+
+/// Fehlgeschlagene Login-/Registrierungsversuche für die Begrenzung (Brute-Force-Schutz)
+model AuthAttempt {
+  id        String   @id @default(uuid())
+  key       String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([key, createdAt])
+  @@map("auth_attempts")
+}
+
+/// API-Keys, die Nutzer für die KI selbst hinterlegen (verschlüsselt; die Kosten trägt ihr eigenes Konto)
+model UserApiKey {
+  userId    String   @map("user_id")
+  /// anthropic | gemini | youtube
+  provider  String
+  /// AES-256-GCM, Format v1:iv:tag:daten (Base64)
+  secret    String
+  /// Die letzten vier Zeichen, damit man den Key in der Oberfläche wiedererkennt
+  last4     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, provider])
+  @@map("user_api_keys")
+}
