@@ -6,10 +6,7 @@ A journal and planner built around the "12-week year": morning and evening journ
 
 **Live demo:** [journal.berger-labs.com](https://journal.berger-labs.com). No account needed. Your data stays in the browser until you register to sync it.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
-  <img src="docs/screenshots/today-light.png" alt="The Today page with journals, habits and tasks" width="100%">
-</picture>
+<img src="docs/screenshots/today-dark.png" alt="The Today page with journals, habits and tasks" width="100%">
 
 ## Features
 
@@ -18,12 +15,35 @@ A journal and planner built around the "12-week year": morning and evening journ
 - Tasks with inbox, today, next 7 days, priorities and a drag-and-drop calendar
 - Habit tracker with streaks and a 30-day chart
 - Notes, study notes with review dates and a book list
-- Optional AI assistant and course import with your own API key, English and German interface
+- Optional [AI assistant and course import](#ai-features) with your own API key
+- English and German interface
 
 <p>
   <img src="docs/screenshots/morning-entry.png" alt="Morning journal" width="49%">
   <img src="docs/screenshots/tasks.png" alt="Task list" width="49%">
 </p>
+
+## AI features
+
+Both features are optional. They need an account and your own Anthropic API key, which you add in the settings.
+
+**Assistant.** A chat panel that knows your workspace:
+
+- Searches your notes, study notes, books and brain dump and names the notes an answer comes from
+- Looks up tasks, projects and goals
+- Reads a website, such as a course page, when you paste its link into the chat
+- Suggests tasks with due dates and priorities, grouped into a project if it fits
+
+It can't change or delete anything. Suggested tasks appear as a card that you can edit, and they are saved only when you accept them. It doesn't see your journal entries or habits.
+
+**Course import.** Turns course material into a project with dated tasks:
+
+- Sources: PDF, text file, pasted text or a course page link. YouTube playlists need a YouTube Data API key, single videos a Google Gemini key (up to 2 hours per run).
+- The model only extracts the structure and estimates the effort. The app plans the dates, either following the course weeks or by your hours per week, so changing the plan costs no further AI call.
+- For text sources, each entry is checked against a quote from the material and flagged if the quote isn't found. Video entries link to a timestamp instead.
+- Nothing is saved until you have reviewed the plan. You can also create an overview note with it.
+
+By default the chat uses Claude Haiku 5.5, the course import Claude Sonnet 5.5 and the video import Gemini 3.5 Flash-Lite. A daily cost limit per user (1 USD unless changed) protects your API account. What is sent to the providers is listed under [privacy details](docs/development.md#privacy-details).
 
 ## Tech stack
 
